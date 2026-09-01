@@ -581,6 +581,17 @@ async function viewRaidGroup(fields) {
   }
 
   const missingCount = getMissingCount(group);
+  const members = await getGroupMembers(group.id);
+  const waitlistMembers = await getGroupMembers(group.id, true);
+  const memberLines = members.length
+    ? members.map((member, index) => `${index + 1}. <@${member.user_id}>：${member.class_name}`)
+    : ['目前還沒有人透過 bot 加入'];
+  const waitlistLines = waitlistMembers.length
+    ? waitlistMembers.map((member, index) => `${index + 1}. <@${member.user_id}>：${member.class_name}`)
+    : ['目前沒有候補'];
+  const initialMemberText = group.initial_member_count > 0
+    ? [`預設人數：${group.initial_member_count} 人（未記錄 Discord 帳號）`]
+    : [];
 
   return [
     `副本團編號 ${group.group_code}`,
@@ -589,7 +600,12 @@ async function viewRaidGroup(fields) {
     `地點：${group.location_name}`,
     `目前人數：${group.initial_member_count + group.member_count}/${group.max_members}`,
     `還缺：${missingCount} 人`,
-    `候補：${group.waitlist_count} 人`
+    `候補：${group.waitlist_count} 人`,
+    ...initialMemberText,
+    '正式成員：',
+    ...memberLines,
+    '候補成員：',
+    ...waitlistLines
   ].join('\n');
 }
 
@@ -621,13 +637,13 @@ async function delayRaidGroup(message, fields) {
   return `好的，副本團編號 ${fields.groupCode} 已延後到 ${formatTaipeiDateTime(fields.scheduledAt)}。`;
 }
 
-async function getGroupMembers(raidGroupId) {
+async function getGroupMembers(raidGroupId, waitlist = false) {
   const result = await db.query(
     `SELECT user_id, class_name
      FROM raid_group_members
-     WHERE raid_group_id = $1 AND is_waitlist = FALSE
+     WHERE raid_group_id = $1 AND is_waitlist = $2
      ORDER BY joined_at ASC`,
-    [raidGroupId]
+    [raidGroupId, waitlist]
   );
 
   return result.rows;
