@@ -114,8 +114,20 @@ function getActorDisplayName(context) {
     ?? getActorId(context);
 }
 
-function formatStoredUserName(user) {
-  return user.user_name || user.user_id;
+async function resolveDisplayName(context, userId, storedName) {
+  if (storedName) {
+    return storedName;
+  }
+
+  const guildMember = await context.guild?.members.fetch(userId).catch(() => null);
+
+  if (guildMember?.displayName) {
+    return guildMember.displayName;
+  }
+
+  const user = await client.users.fetch(userId).catch(() => null);
+
+  return user?.globalName ?? user?.username ?? userId;
 }
 
 function escapeRegExp(value) {
@@ -698,7 +710,7 @@ async function joinRaidGroup(message, fields) {
   return `好的，已為你設定好，副本團編號為 ${fields.groupCode}，目前還缺少 ${missingCount} 人`;
 }
 
-async function viewRaidGroup(fields) {
+async function viewRaidGroup(context, fields) {
   const group = await getGroupSummary(fields.groupCode);
 
   if (!group) {
@@ -708,11 +720,18 @@ async function viewRaidGroup(fields) {
   const missingCount = getMissingCount(group);
   const members = await getGroupMembers(group.id);
   const waitlistMembers = await getGroupMembers(group.id, true);
+  const leaderName = await resolveDisplayName(context, group.leader_id, group.leader_name);
+  const memberNames = await Promise.all(
+    members.map((member) => resolveDisplayName(context, member.user_id, member.user_name))
+  );
+  const waitlistNames = await Promise.all(
+    waitlistMembers.map((member) => resolveDisplayName(context, member.user_id, member.user_name))
+  );
   const memberLines = members.length
-    ? members.map((member, index) => `${index + 1}. ${formatStoredUserName(member)}：${member.class_name}`)
+    ? members.map((member, index) => `${index + 1}. ${memberNames[index]}：${member.class_name}`)
     : ['目前還沒有人透過 bot 加入'];
   const waitlistLines = waitlistMembers.length
-    ? waitlistMembers.map((member, index) => `${index + 1}. ${formatStoredUserName(member)}：${member.class_name}`)
+    ? waitlistMembers.map((member, index) => `${index + 1}. ${waitlistNames[index]}：${member.class_name}`)
     : ['目前沒有候補'];
   const initialMemberText = group.initial_member_count > 0
     ? [`預設人數：${group.initial_member_count} 人（未記錄 Discord 帳號）`]
@@ -721,7 +740,7 @@ async function viewRaidGroup(fields) {
   return [
     `副本團編號 ${group.group_code}`,
     `副本：${group.dungeon_name}`,
-    `團長：${formatStoredUserName({ user_id: group.leader_id, user_name: group.leader_name })}`,
+    `團長：${leaderName}`,
     `時間：${formatTaipeiDateTime(group.scheduled_at)}`,
     `地點：${group.location_name}`,
     `目前人數：${group.initial_member_count + group.member_count}/${group.max_members}`,
@@ -978,7 +997,7 @@ async function handleSlashCommand(interaction) {
   }
 
   if (interaction.commandName === '查團') {
-    return viewRaidGroup({
+    return viewRaidGroup(interaction, {
       groupCode: interaction.options.getString('團號', true)
     });
   }
@@ -1027,7 +1046,7 @@ async function handleCommand(message, content) {
   }
 
   if (command.type === 'view') {
-    return viewRaidGroup(command.fields);
+    return viewRaidGroup(message, command.fields);
   }
 
   if (command.type === 'delay') {
