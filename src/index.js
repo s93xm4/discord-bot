@@ -555,7 +555,9 @@ async function joinRaidGroup(message, fields) {
 
   await db.query(
     `UPDATE raid_groups
-     SET status = $1, updated_at = NOW()
+     SET status = $1,
+         next_reminder_at = CASE WHEN $1 = 'full' THEN NULL ELSE next_reminder_at END,
+         updated_at = NOW()
      WHERE id = $2`,
     [status, group.id]
   );
@@ -653,6 +655,16 @@ async function sendReminderMessages() {
 
     const missingCount = getMissingCount(group);
     const prefix = group.notify_everyone ? '@everyone ' : '';
+
+    if (missingCount <= 0) {
+      await db.query(
+        `UPDATE raid_groups
+         SET next_reminder_at = NULL
+         WHERE id = $1`,
+        [group.id]
+      );
+      continue;
+    }
 
     await channel.send(
       `${prefix}副本團編號 ${group.group_code}，副本 ${group.dungeon_name}，預定副本時間為 ${formatTaipeiDateTime(group.scheduled_at)}，目前還缺 ${missingCount} 人`
