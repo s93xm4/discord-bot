@@ -17,10 +17,7 @@ if (!databaseUrl) {
 
 const { Pool } = pg;
 const db = new Pool({
-  connectionString: databaseUrl,
-  ssl: {
-    rejectUnauthorized: false
-  }
+  connectionString: databaseUrl
 });
 
 const client = new Client({
