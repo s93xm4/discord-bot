@@ -46,7 +46,7 @@ Neon 的免費方案適合練習 Discord bot：
 5. 複製 connection string，格式大概像這樣：
 
 ```text
-postgresql://user:password@host/database?sslmode=require
+postgresql://user:password@host/database?sslmode=verify-full
 ```
 
 6. 貼到 `.env`：
