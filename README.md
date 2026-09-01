@@ -94,6 +94,8 @@ DATABASE_URL=你的 Neon connection string
 @機器人 查團 20260901001
 ```
 
+會列出副本、人數、缺額、正式成員職業，以及候補成員職業。
+
 ### 延後
 
 ```text
