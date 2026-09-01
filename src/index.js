@@ -84,11 +84,38 @@ const slashCommands = [
     .addStringOption((option) => option
       .setName('團號')
       .setDescription('副本團編號')
+      .setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('解散團')
+    .setDescription('由開團者解散自己的副本團')
+    .addStringOption((option) => option
+      .setName('團號')
+      .setDescription('副本團編號')
+      .setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('停止通知')
+    .setDescription('由開團者停止副本團的自動提醒')
+    .addStringOption((option) => option
+      .setName('團號')
+      .setDescription('副本團編號')
       .setRequired(true))
 ];
 
 function getActorId(context) {
   return context.author?.id ?? context.user.id;
+}
+
+function getActorDisplayName(context) {
+  return context.member?.displayName
+    ?? context.author?.globalName
+    ?? context.author?.username
+    ?? context.user?.globalName
+    ?? context.user?.username
+    ?? getActorId(context);
+}
+
+function formatStoredUserName(user) {
+  return user.user_name || user.user_id;
 }
 
 function escapeRegExp(value) {
@@ -411,6 +438,7 @@ async function initDatabase() {
       guild_id TEXT,
       channel_id TEXT NOT NULL,
       leader_id TEXT NOT NULL,
+      leader_name TEXT,
       dungeon_name TEXT NOT NULL,
       max_members INTEGER NOT NULL CHECK (max_members > 0),
       initial_member_count INTEGER NOT NULL DEFAULT 0 CHECK (initial_member_count >= 0),
@@ -431,6 +459,7 @@ async function initDatabase() {
       id BIGSERIAL PRIMARY KEY,
       raid_group_id BIGINT NOT NULL REFERENCES raid_groups(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL,
+      user_name TEXT,
       class_name TEXT NOT NULL,
       is_waitlist BOOLEAN NOT NULL DEFAULT FALSE,
       joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -451,6 +480,16 @@ async function initDatabase() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (channel_id, user_id)
     )
+  `);
+
+  await db.query(`
+    ALTER TABLE raid_groups
+    ADD COLUMN IF NOT EXISTS leader_name TEXT
+  `);
+
+  await db.query(`
+    ALTER TABLE raid_group_members
+    ADD COLUMN IF NOT EXISTS user_name TEXT
   `);
 }
 
@@ -517,6 +556,7 @@ async function generateGroupCode(scheduledAt) {
 
 async function createRaidGroup(message, fields) {
   const initialMemberCount = fields.initialMemberCount ?? 0;
+  const leaderName = getActorDisplayName(message);
 
   if (initialMemberCount >= fields.maxMembers) {
     return '預設人數不能大於或等於預定人數，因為這樣就不需要找人了。請重新設定預設人數。';
@@ -533,16 +573,17 @@ async function createRaidGroup(message, fields) {
 
   await db.query(
     `INSERT INTO raid_groups (
-       group_code, guild_id, channel_id, leader_id, dungeon_name, max_members,
+       group_code, guild_id, channel_id, leader_id, leader_name, dungeon_name, max_members,
        initial_member_count, location_name, scheduled_at, reminder_interval_minutes,
        next_reminder_at, notify_everyone
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       groupCode,
       message.guildId,
       message.channelId,
       getActorId(message),
+      leaderName,
       fields.dungeonName,
       fields.maxMembers,
       initialMemberCount,
@@ -554,11 +595,33 @@ async function createRaidGroup(message, fields) {
     ]
   );
 
+  await sendGroupCreatedNotice(message, groupCode, fields);
+
   const reminderText = fields.reminderIntervalMinutes
     ? `，每 ${fields.reminderIntervalMinutes} 分鐘提醒一次${fields.notifyEveryone ? '，會通知所有人' : ''}`
     : '';
 
   return `好的，已為你設定好，副本團編號為 ${groupCode}${reminderText}`;
+}
+
+async function sendGroupCreatedNotice(message, groupCode, fields) {
+  if (!message.channel?.isTextBased()) {
+    return;
+  }
+
+  await message.channel.send({
+    content: [
+      '@everyone 有新的副本團正在找人！',
+      `副本團編號：${groupCode}`,
+      `副本：${fields.dungeonName}`,
+      `時間：${formatTaipeiDateTime(fields.scheduledAt)}`,
+      `地點：${fields.locationName}`,
+      `想加入請使用：/加入團 團號:${groupCode} 職業:你的職業`
+    ].join('\n'),
+    allowedMentions: {
+      parse: ['everyone']
+    }
+  });
 }
 
 async function getGroupSummary(groupCode) {
@@ -582,6 +645,7 @@ function getMissingCount(group) {
 
 async function joinRaidGroup(message, fields) {
   const group = await getGroupSummary(fields.groupCode);
+  const userName = getActorDisplayName(message);
 
   if (!group) {
     return `找不到副本團編號 ${fields.groupCode}。`;
@@ -601,12 +665,13 @@ async function joinRaidGroup(message, fields) {
   const isWaitlist = existingMember ? existingMember.is_waitlist : getMissingCount(group) <= 0;
 
   await db.query(
-    `INSERT INTO raid_group_members (raid_group_id, user_id, class_name, is_waitlist)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO raid_group_members (raid_group_id, user_id, user_name, class_name, is_waitlist)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (raid_group_id, user_id)
      DO UPDATE SET class_name = EXCLUDED.class_name,
+                   user_name = EXCLUDED.user_name,
                    updated_at = NOW()`,
-    [group.id, getActorId(message), fields.className, isWaitlist]
+    [group.id, getActorId(message), userName, fields.className, isWaitlist]
   );
 
   const updatedGroup = await getGroupSummary(fields.groupCode);
@@ -644,10 +709,10 @@ async function viewRaidGroup(fields) {
   const members = await getGroupMembers(group.id);
   const waitlistMembers = await getGroupMembers(group.id, true);
   const memberLines = members.length
-    ? members.map((member, index) => `${index + 1}. <@${member.user_id}>：${member.class_name}`)
+    ? members.map((member, index) => `${index + 1}. ${formatStoredUserName(member)}：${member.class_name}`)
     : ['目前還沒有人透過 bot 加入'];
   const waitlistLines = waitlistMembers.length
-    ? waitlistMembers.map((member, index) => `${index + 1}. <@${member.user_id}>：${member.class_name}`)
+    ? waitlistMembers.map((member, index) => `${index + 1}. ${formatStoredUserName(member)}：${member.class_name}`)
     : ['目前沒有候補'];
   const initialMemberText = group.initial_member_count > 0
     ? [`預設人數：${group.initial_member_count} 人（未記錄 Discord 帳號）`]
@@ -656,6 +721,7 @@ async function viewRaidGroup(fields) {
   return [
     `副本團編號 ${group.group_code}`,
     `副本：${group.dungeon_name}`,
+    `團長：${formatStoredUserName({ user_id: group.leader_id, user_name: group.leader_name })}`,
     `時間：${formatTaipeiDateTime(group.scheduled_at)}`,
     `地點：${group.location_name}`,
     `目前人數：${group.initial_member_count + group.member_count}/${group.max_members}`,
@@ -697,9 +763,68 @@ async function delayRaidGroup(message, fields) {
   return `好的，副本團編號 ${fields.groupCode} 已延後到 ${formatTaipeiDateTime(fields.scheduledAt)}。`;
 }
 
+async function cancelRaidGroup(message, fields) {
+  const group = await getGroupSummary(fields.groupCode);
+
+  if (!group) {
+    return `找不到副本團編號 ${fields.groupCode}。`;
+  }
+
+  if (group.leader_id !== getActorId(message)) {
+    return `只有開團者可以解散副本團編號 ${fields.groupCode}。`;
+  }
+
+  if (group.status === 'cancelled') {
+    return `副本團編號 ${fields.groupCode} 已經解散了。`;
+  }
+
+  if (group.status === 'completed') {
+    return `副本團編號 ${fields.groupCode} 已經結束，不能解散。`;
+  }
+
+  await db.query(
+    `UPDATE raid_groups
+     SET status = 'cancelled',
+         due_notified = TRUE,
+         next_reminder_at = NULL,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [group.id]
+  );
+
+  return `好的，副本團編號 ${fields.groupCode} 已解散。`;
+}
+
+async function stopRaidGroupReminders(message, fields) {
+  const group = await getGroupSummary(fields.groupCode);
+
+  if (!group) {
+    return `找不到副本團編號 ${fields.groupCode}。`;
+  }
+
+  if (group.leader_id !== getActorId(message)) {
+    return `只有開團者可以停止副本團編號 ${fields.groupCode} 的自動通知。`;
+  }
+
+  if (!group.reminder_interval_minutes) {
+    return `副本團編號 ${fields.groupCode} 目前沒有設定自動通知。`;
+  }
+
+  await db.query(
+    `UPDATE raid_groups
+     SET reminder_interval_minutes = NULL,
+         next_reminder_at = NULL,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [group.id]
+  );
+
+  return `好的，副本團編號 ${fields.groupCode} 已停止自動通知。`;
+}
+
 async function getGroupMembers(raidGroupId, waitlist = false) {
   const result = await db.query(
-    `SELECT user_id, class_name
+    `SELECT user_id, user_name, class_name
      FROM raid_group_members
      WHERE raid_group_id = $1 AND is_waitlist = $2
      ORDER BY joined_at ASC`,
@@ -854,6 +979,18 @@ async function handleSlashCommand(interaction) {
 
   if (interaction.commandName === '查團') {
     return viewRaidGroup({
+      groupCode: interaction.options.getString('團號', true)
+    });
+  }
+
+  if (interaction.commandName === '解散團') {
+    return cancelRaidGroup(interaction, {
+      groupCode: interaction.options.getString('團號', true)
+    });
+  }
+
+  if (interaction.commandName === '停止通知') {
+    return stopRaidGroupReminders(interaction, {
       groupCode: interaction.options.getString('團號', true)
     });
   }
