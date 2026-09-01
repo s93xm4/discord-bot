@@ -14,7 +14,7 @@
 2. 在 `Bot` 頁面新增 bot，複製 token。
 3. 在 `Bot` 頁面打開 `MESSAGE CONTENT INTENT`。
 4. 到 `OAuth2 > URL Generator`：
-   - Scopes 勾 `bot`
+   - Scopes 勾 `bot`、`applications.commands`
    - Bot Permissions 勾 `Send Messages`、`Read Message History`、`View Channels`
 5. 用產生的網址把 bot 邀請進你的伺服器。
 
@@ -59,6 +59,15 @@ DATABASE_URL=你的 Neon connection string
 ## 指令
 
 目前第一版使用固定格式，少填欄位時 bot 會記住你的草稿並追問。草稿保留 30 分鐘。
+也可以使用 Discord slash command：`/開團`、`/加入團`、`/查團`。
+
+### Slash Commands
+
+```text
+/開團 副本:243 人數:6 日期:2026/09/01 時間:22:00 地點:蒙德老家 預設人數:2 提醒分鐘:60 通知所有人:true
+/加入團 團號:20260901001 職業:VI
+/查團 團號:20260901001
+```
 
 ### 開團
 

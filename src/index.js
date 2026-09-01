@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Client, GatewayIntentBits } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import pg from 'pg';
 
 const token = process.env.DISCORD_TOKEN;
@@ -30,6 +30,66 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
+
+const slashCommands = [
+  new SlashCommandBuilder()
+    .setName('開團')
+    .setDescription('建立一個副本團')
+    .addStringOption((option) => option
+      .setName('副本')
+      .setDescription('副本名稱，例如 243')
+      .setRequired(true))
+    .addIntegerOption((option) => option
+      .setName('人數')
+      .setDescription('預定總人數')
+      .setMinValue(1)
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('日期')
+      .setDescription('預定日期，例如 2026/09/01')
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('時間')
+      .setDescription('預定時間，例如 22:00')
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('地點')
+      .setDescription('集合地點')
+      .setRequired(true))
+    .addIntegerOption((option) => option
+      .setName('預設人數')
+      .setDescription('已經有幾個人，不含透過 bot 加入的人')
+      .setMinValue(0))
+    .addIntegerOption((option) => option
+      .setName('提醒分鐘')
+      .setDescription('每隔幾分鐘提醒一次還缺多少人')
+      .setMinValue(1))
+    .addBooleanOption((option) => option
+      .setName('通知所有人')
+      .setDescription('提醒時是否加上 @everyone')),
+  new SlashCommandBuilder()
+    .setName('加入團')
+    .setDescription('加入副本團，或修改自己在該團的職業')
+    .addStringOption((option) => option
+      .setName('團號')
+      .setDescription('副本團編號')
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('職業')
+      .setDescription('你的職業名稱')
+      .setRequired(true)),
+  new SlashCommandBuilder()
+    .setName('查團')
+    .setDescription('查看副本團目前人數、正式成員與候補成員')
+    .addStringOption((option) => option
+      .setName('團號')
+      .setDescription('副本團編號')
+      .setRequired(true))
+];
+
+function getActorId(context) {
+  return context.author?.id ?? context.user.id;
+}
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -482,7 +542,7 @@ async function createRaidGroup(message, fields) {
       groupCode,
       message.guildId,
       message.channelId,
-      message.author.id,
+      getActorId(message),
       fields.dungeonName,
       fields.maxMembers,
       initialMemberCount,
@@ -535,7 +595,7 @@ async function joinRaidGroup(message, fields) {
     `SELECT id, is_waitlist
      FROM raid_group_members
      WHERE raid_group_id = $1 AND user_id = $2`,
-    [group.id, message.author.id]
+    [group.id, getActorId(message)]
   );
   const existingMember = existingResult.rows[0];
   const isWaitlist = existingMember ? existingMember.is_waitlist : getMissingCount(group) <= 0;
@@ -546,7 +606,7 @@ async function joinRaidGroup(message, fields) {
      ON CONFLICT (raid_group_id, user_id)
      DO UPDATE SET class_name = EXCLUDED.class_name,
                    updated_at = NOW()`,
-    [group.id, message.author.id, fields.className, isWaitlist]
+    [group.id, getActorId(message), fields.className, isWaitlist]
   );
 
   const updatedGroup = await getGroupSummary(fields.groupCode);
@@ -616,7 +676,7 @@ async function delayRaidGroup(message, fields) {
     return `找不到副本團編號 ${fields.groupCode}。`;
   }
 
-  if (group.leader_id !== message.author.id) {
+  if (group.leader_id !== getActorId(message)) {
     return `只有開團者可以延後副本團編號 ${fields.groupCode}。`;
   }
 
@@ -750,6 +810,57 @@ function startScheduler() {
   }, schedulerIntervalMs);
 }
 
+async function registerSlashCommands() {
+  const rest = new REST({ version: '10' }).setToken(token);
+  const commandPayload = slashCommands.map((command) => command.toJSON());
+
+  for (const guild of client.guilds.cache.values()) {
+    await rest.put(
+      Routes.applicationGuildCommands(client.user.id, guild.id),
+      { body: commandPayload }
+    );
+  }
+
+  console.log(`Registered ${slashCommands.length} slash commands for ${client.guilds.cache.size} guild(s).`);
+}
+
+async function handleSlashCommand(interaction) {
+  if (interaction.commandName === '開團') {
+    const parsedDateTime = parseDateTime(
+      `日期${interaction.options.getString('日期', true)} 時間${interaction.options.getString('時間', true)}`
+    );
+
+    if (!parsedDateTime.scheduledAt) {
+      return '日期時間格式怪怪的，請用例如：日期 2026/09/01、時間 22:00。';
+    }
+
+    return createRaidGroup(interaction, {
+      dungeonName: interaction.options.getString('副本', true),
+      maxMembers: interaction.options.getInteger('人數', true),
+      initialMemberCount: interaction.options.getInteger('預設人數') ?? 0,
+      locationName: interaction.options.getString('地點', true),
+      scheduledAt: parsedDateTime.scheduledAt,
+      reminderIntervalMinutes: interaction.options.getInteger('提醒分鐘'),
+      notifyEveryone: interaction.options.getBoolean('通知所有人') ?? false
+    });
+  }
+
+  if (interaction.commandName === '加入團') {
+    return joinRaidGroup(interaction, {
+      groupCode: interaction.options.getString('團號', true),
+      className: interaction.options.getString('職業', true)
+    });
+  }
+
+  if (interaction.commandName === '查團') {
+    return viewRaidGroup({
+      groupCode: interaction.options.getString('團號', true)
+    });
+  }
+
+  return null;
+}
+
 async function handleCommand(message, content) {
   const pendingCommand = revivePendingCommand(await getPendingCommand(message));
   const parsedCommand = parseCommandForPending(content, pendingCommand);
@@ -791,8 +902,48 @@ async function handleCommand(message, content) {
 
 client.once('ready', async () => {
   await initDatabase();
+
+  try {
+    await registerSlashCommands();
+  } catch (error) {
+    console.error('Failed to register slash commands:', error);
+  }
+
   startScheduler();
   console.log(`Logged in as ${client.user.tag}`);
+});
+
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) {
+    return;
+  }
+
+  try {
+    const reply = await handleSlashCommand(interaction);
+
+    if (reply) {
+      await interaction.reply({
+        content: reply,
+        allowedMentions: {
+          parse: []
+        }
+      });
+    }
+  } catch (error) {
+    console.error(error);
+
+    const errorReply = {
+      content: '處理指令時發生錯誤，請稍後再試一次。',
+      ephemeral: true
+    };
+
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp(errorReply);
+      return;
+    }
+
+    await interaction.reply(errorReply);
+  }
 });
 
 client.on('messageCreate', async (message) => {
