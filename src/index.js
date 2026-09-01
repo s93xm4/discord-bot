@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
+import { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import pg from 'pg';
 
 const token = process.env.DISCORD_TOKEN;
@@ -900,7 +900,7 @@ async function handleCommand(message, content) {
   return null;
 }
 
-client.once('ready', async () => {
+client.once(Events.ClientReady, async () => {
   await initDatabase();
 
   try {
