@@ -109,6 +109,25 @@ export async function getGroupSummary(groupCode) {
   return result.rows[0] ?? null;
 }
 
+export async function getRecruitingGroups(guildId) {
+  const result = await db.query(
+    `SELECT rg.*,
+            COUNT(rgm.id) FILTER (WHERE rgm.is_waitlist = FALSE)::INT AS member_count,
+            COUNT(rgm.id) FILTER (WHERE rgm.is_waitlist = TRUE)::INT AS waitlist_count
+     FROM raid_groups rg
+     LEFT JOIN raid_group_members rgm ON rgm.raid_group_id = rg.id
+     WHERE rg.guild_id = $1
+       AND rg.status = 'open'
+       AND rg.scheduled_at > NOW()
+     GROUP BY rg.id
+     HAVING rg.max_members - rg.initial_member_count - COUNT(rgm.id) FILTER (WHERE rgm.is_waitlist = FALSE) > 0
+     ORDER BY rg.scheduled_at ASC, rg.created_at ASC`,
+    [guildId]
+  );
+
+  return result.rows;
+}
+
 export async function getGroupMembers(raidGroupId, waitlist = false) {
   const result = await db.query(
     `SELECT user_id, user_name, class_name
