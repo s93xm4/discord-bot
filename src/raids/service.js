@@ -37,6 +37,33 @@ function formatMemberLines(members) {
     : ['目前還沒有人透過 bot 加入'];
 }
 
+async function notifyGroupMembers(context, group, lines) {
+  if (!context.channel?.isTextBased()) {
+    return;
+  }
+
+  const members = await getGroupMembers(group.id);
+  const waitlistMembers = await getGroupMembers(group.id, true);
+  const userIds = [...new Set([
+    ...members.map((member) => member.user_id),
+    ...waitlistMembers.map((member) => member.user_id)
+  ])];
+
+  if (!userIds.length) {
+    return;
+  }
+
+  await context.channel.send({
+    content: [
+      userIds.map((userId) => `<@${userId}>`).join(' '),
+      ...lines
+    ].join('\n'),
+    allowedMentions: {
+      users: userIds
+    }
+  });
+}
+
 async function sendGroupCreatedNotice(context, groupCode, fields) {
   if (!context.channel?.isTextBased()) {
     return;
@@ -238,6 +265,11 @@ export async function cancelRaidGroup(context, fields) {
   }
 
   await cancelGroup(group.id);
+  await notifyGroupMembers(context, group, [
+    `咕嘎，副本團編號 ${fields.groupCode} 已由團長解散。`,
+    `副本：${group.dungeon_name}`,
+    `原訂時間：${formatTaipeiDateTime(group.scheduled_at)}`
+  ]);
 
   return `咕嘎，副本團編號 ${fields.groupCode} 已解散。`;
 }
@@ -298,6 +330,12 @@ export async function updateRaidTime(context, fields) {
   }
 
   await updateGroupTime(group.id, fields.scheduledAt);
+  await notifyGroupMembers(context, group, [
+    `咕嘎，副本團編號 ${fields.groupCode} 的時間已由團長修改。`,
+    `副本：${group.dungeon_name}`,
+    `原時間：${formatTaipeiDateTime(group.scheduled_at)}`,
+    `新時間：${formatTaipeiDateTime(fields.scheduledAt)}`
+  ]);
 
   return `咕嘎，副本團編號 ${fields.groupCode} 已改到 ${formatTaipeiDateTime(fields.scheduledAt)}。`;
 }
