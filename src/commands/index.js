@@ -1,0 +1,30 @@
+import { REST, Routes } from 'discord.js';
+import { cancelGroupCommand } from './cancelGroup.js';
+import { createGroupCommand } from './createGroup.js';
+import { joinGroupCommand } from './joinGroup.js';
+import { updateNotificationCommand } from './updateNotification.js';
+import { updateTimeCommand } from './updateTime.js';
+import { viewGroupCommand } from './viewGroup.js';
+
+export const slashCommands = [
+  createGroupCommand,
+  joinGroupCommand,
+  viewGroupCommand,
+  cancelGroupCommand,
+  updateNotificationCommand,
+  updateTimeCommand
+];
+
+export async function registerSlashCommands(client, commands) {
+  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+  const commandPayload = commands.map((command) => command.data.toJSON());
+
+  for (const guild of client.guilds.cache.values()) {
+    await rest.put(
+      Routes.applicationGuildCommands(client.user.id, guild.id),
+      { body: commandPayload }
+    );
+  }
+
+  console.log(`Registered ${commands.length} slash commands for ${client.guilds.cache.size} guild(s).`);
+}
