@@ -1,6 +1,6 @@
 # Discord Echo Bot
 
-這是一個 Discord 組團 bot：只要有人在伺服器頻道 `@` 它，就可以開副本團、加入副本團、查看目前人數，並把資料記錄到線上 Postgres 資料庫。
+這是一個 Discord 組團 bot：使用 slash command 開副本團、加入副本團、查看目前人數，並把資料記錄到線上 Postgres 資料庫。
 
 ## 需求
 
@@ -12,11 +12,10 @@
 
 1. 到 Discord Developer Portal 建立 Application。
 2. 在 `Bot` 頁面新增 bot，複製 token。
-3. 在 `Bot` 頁面打開 `MESSAGE CONTENT INTENT`。
-4. 到 `OAuth2 > URL Generator`：
+3. 到 `OAuth2 > URL Generator`：
    - Scopes 勾 `bot`、`applications.commands`
    - Bot Permissions 勾 `Send Messages`、`Read Message History`、`View Channels`
-5. 用產生的網址把 bot 邀請進你的伺服器。
+4. 用產生的網址把 bot 邀請進你的伺服器。
 
 ## 本機執行
 
@@ -58,8 +57,7 @@ DATABASE_URL=你的 Neon connection string
 
 ## 指令
 
-目前第一版使用固定格式，少填欄位時 bot 會記住你的草稿並追問。草稿保留 30 分鐘。
-也可以使用 Discord slash command：`/開團`、`/加入團`、`/查團`、`/解散團`、`/停止通知`。
+目前所有功能都使用 Discord slash command：`/開團`、`/加入團`、`/查團`、`/解散團`、`/修改通知`、`/修改時間`。
 
 ### Slash Commands
 
@@ -68,13 +66,15 @@ DATABASE_URL=你的 Neon connection string
 /加入團 團號:20260901001 職業:VI
 /查團 團號:20260901001
 /解散團 團號:20260901001
-/停止通知 團號:20260901001
+/修改通知 團號:20260901001 動作:開啟 提醒分鐘:60 通知所有人:true
+/修改通知 團號:20260901001 動作:停止
+/修改時間 團號:20260901001 日期:2026/09/01 時間:22:30
 ```
 
 ### 開團
 
 ```text
-@機器人 開團 副本243 人數6 日期2026/09/01 時間22:00 地點蒙德老家 預設人數2 每60分鐘通知 通知所有人
+/開團 副本:243 人數:6 日期:2026/09/01 時間:22:00 地點:蒙德老家 預設人數:2 提醒分鐘:60 通知所有人:true
 ```
 
 必填：
@@ -87,16 +87,16 @@ DATABASE_URL=你的 Neon connection string
 
 選填：
 
-- `預設人數2`：代表原本就有 2 個人，只再找剩下的人。
-- `每60分鐘通知` 或 `每1小時通知`：定時提醒還缺多少人。
-- `通知所有人`：提醒時會加上 `@everyone`；沒寫就只發普通訊息。
+- `預設人數`：代表原本就有幾個人，只再找剩下的人。
+- `提醒分鐘`：定時提醒還缺多少人。
+- `通知所有人`：提醒時會加上 `@everyone`；沒選就只發普通訊息。
 
 開團完成後，bot 會發一則 `@everyone` 訊息通知有新團正在找人，並提示大家用 `/加入團` 加入。
 
 ### 加入或修改職業
 
 ```text
-@機器人 加入 20260901001 職業VI
+/加入團 團號:20260901001 職業:VI
 ```
 
 同一個人不能重複加入同一團；再次加入會視為修改職業。
@@ -104,19 +104,19 @@ DATABASE_URL=你的 Neon connection string
 ### 查團
 
 ```text
-@機器人 查團 20260901001
+/查團 團號:20260901001
 ```
 
 會列出副本、人數、缺額、正式成員職業，以及候補成員職業。
 也會列出開團者名稱。成員與候補只顯示使用者名稱，不會在查團時 `@` 他們。
 
-### 延後
+### 修改時間
 
 ```text
-@機器人 延後 20260901001 日期2026/09/01 時間22:30
+/修改時間 團號:20260901001 日期:2026/09/01 時間:22:30
 ```
 
-只有開團者可以延後。
+只有開團者可以修改副本時間。
 
 ### 解散團
 
@@ -126,32 +126,18 @@ DATABASE_URL=你的 Neon connection string
 
 只有開團者可以解散自己的副本團。解散後會停止自動通知，也不會再到點提醒。
 
-### 停止通知
+### 修改通知
 
 ```text
-/停止通知 團號:20260901001
+/修改通知 團號:20260901001 動作:開啟 提醒分鐘:60 通知所有人:true
+/修改通知 團號:20260901001 動作:停止
 ```
 
-只有開團者可以停止該團的自動通知，團本身仍會保留。
+只有開團者可以修改該團的自動通知。開啟通知時如果該團原本沒有提醒間隔，需要填 `提醒分鐘`。
 
 ## 資料表
 
-程式啟動時會自動建立這張表：
-
-```sql
-CREATE TABLE IF NOT EXISTS mentioned_messages (
-  id BIGSERIAL PRIMARY KEY,
-  guild_id TEXT,
-  channel_id TEXT NOT NULL,
-  message_id TEXT NOT NULL UNIQUE,
-  author_id TEXT NOT NULL,
-  content TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
-
-每次有人 `@` bot 並輸入文字，bot 會先把訊息存進 `mentioned_messages`，再依指令更新組團資料。
-組團功能另外會自動建立 `raid_groups`、`raid_group_members`、`pending_prompts`。
+程式啟動時會自動建立 `raid_groups`、`raid_group_members`。
 
 ## 注意
 
