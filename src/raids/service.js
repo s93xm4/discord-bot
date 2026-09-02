@@ -10,6 +10,7 @@ import {
   getExistingMember,
   getGroupMembers,
   getGroupSummary,
+  getRecruitingGroups,
   getReminderDueGroups,
   scheduleNextReminder,
   updateGroupNotification,
@@ -184,6 +185,35 @@ export async function viewRaidGroup(context, client, fields) {
     '候補成員：',
     ...waitlistLines
   ].join('\n');
+}
+
+export async function viewRecruitingBoard(context, client) {
+  const groups = await getRecruitingGroups(context.guildId);
+
+  if (!groups.length) {
+    return '咕嘎，目前沒有正在招募的副本團。';
+  }
+
+  const groupLines = await Promise.all(groups.map(async (group, index) => {
+    const leaderName = await resolveDisplayName(context, client, group.leader_id, group.leader_name);
+    const missingCount = getMissingCount(group);
+    const memberCount = group.initial_member_count + group.member_count;
+
+    return [
+      `${index + 1}. 副本團編號 ${group.group_code}`,
+      `副本：${group.dungeon_name}`,
+      `團長：${leaderName}`,
+      `時間：${formatTaipeiDateTime(group.scheduled_at)}`,
+      `地點：${group.location_name}`,
+      `人數：${memberCount}/${group.max_members}，還缺 ${missingCount} 人，候補 ${group.waitlist_count} 人`,
+      `加入方式：/加入團 團號:${group.group_code} 職業:你的職業`
+    ].join('\n');
+  }));
+
+  return [
+    '咕嘎嘎，目前正在招募的副本團：',
+    ...groupLines
+  ].join('\n\n');
 }
 
 export async function cancelRaidGroup(context, fields) {

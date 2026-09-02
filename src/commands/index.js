@@ -2,6 +2,7 @@ import { REST, Routes } from 'discord.js';
 import { cancelGroupCommand } from './cancelGroup.js';
 import { createGroupCommand } from './createGroup.js';
 import { joinGroupCommand } from './joinGroup.js';
+import { recruitingBoardCommand } from './recruitingBoard.js';
 import { updateNotificationCommand } from './updateNotification.js';
 import { updateTimeCommand } from './updateTime.js';
 import { viewGroupCommand } from './viewGroup.js';
@@ -10,6 +11,7 @@ export const slashCommands = [
   createGroupCommand,
   joinGroupCommand,
   viewGroupCommand,
+  recruitingBoardCommand,
   cancelGroupCommand,
   updateNotificationCommand,
   updateTimeCommand
