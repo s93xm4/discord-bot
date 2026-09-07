@@ -35,8 +35,8 @@ export const createGroupCommand = {
       .setMinValue(0))
     .addIntegerOption((option) => option
       .setName('提醒分鐘')
-      .setDescription('每隔幾分鐘提醒一次還缺多少人')
-      .setMinValue(1))
+      .setDescription('每隔幾分鐘提醒一次還缺多少人，最少 60 分鐘')
+      .setMinValue(60))
     .addStringOption((option) => addYesNoChoices(option
       .setName('通知所有人')
       .setDescription('提醒時是否加上 @everyone')))

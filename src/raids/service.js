@@ -37,6 +37,8 @@ const embedColors = {
   danger: 0xED4245
 };
 
+const minimumReminderIntervalMinutes = 60;
+
 function trimEmbedValue(value, maxLength = 1024) {
   if (value.length <= maxLength) {
     return value;
@@ -226,6 +228,10 @@ export async function createRaidGroup(context, fields) {
 
   if (fields.scheduledAt <= new Date()) {
     return '咕嘎，預定時間已經過了，請換一個未來的日期時間。';
+  }
+
+  if (fields.reminderIntervalMinutes && fields.reminderIntervalMinutes < minimumReminderIntervalMinutes) {
+    return `咕嘎，自動通知最少要 ${minimumReminderIntervalMinutes} 分鐘一次，請把「提醒分鐘」改成 ${minimumReminderIntervalMinutes} 以上。`;
   }
 
   const groupCode = await generateGroupCode(fields.scheduledAt);
@@ -737,6 +743,10 @@ export async function updateRaidNotification(context, fields) {
 
   if (!reminderIntervalMinutes) {
     return '咕嘎，開啟通知時需要填「提醒分鐘」，例如 60。';
+  }
+
+  if (reminderIntervalMinutes < minimumReminderIntervalMinutes) {
+    return `咕嘎，自動通知最少要 ${minimumReminderIntervalMinutes} 分鐘一次，請把「提醒分鐘」改成 ${minimumReminderIntervalMinutes} 以上。`;
   }
 
   await updateGroupNotification(group.id, {

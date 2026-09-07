@@ -35,8 +35,8 @@ export const manageGroupCommand = {
       ))
     .addIntegerOption((option) => option
       .setName('提醒分鐘')
-      .setDescription('開啟通知時，每隔幾分鐘提醒一次')
-      .setMinValue(1))
+      .setDescription('開啟通知時，每隔幾分鐘提醒一次，最少 60 分鐘')
+      .setMinValue(60))
     .addStringOption((option) => addYesNoChoices(option
       .setName('通知所有人')
       .setDescription('提醒時是否加上 @everyone'))),
