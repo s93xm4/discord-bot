@@ -10,6 +10,7 @@ import {
   getExistingMember,
   getGroupMembers,
   getGroupSummary,
+  getMyGroups,
   getPendingMembers,
   getRecruitingGroups,
   getReminderDueGroups,
@@ -42,6 +43,14 @@ function formatMemberLines(members) {
     : ['目前還沒有人透過 bot 加入'];
 }
 
+function limitReplyLength(text) {
+  if (text.length <= 1900) {
+    return text;
+  }
+
+  return `${text.slice(0, 1850)}\n\n咕嘎，內容太多，後面先省略。可以用 /查團 團號:副本團編號 查看單一團完整資訊。`;
+}
+
 function getGroupJoinStatus(group, missingCount) {
   return missingCount === 0 ? 'full' : 'open';
 }
@@ -61,6 +70,59 @@ function getMemberStateName(isWaitlist) {
 
 function shouldBlockFormalMove(group, member, targetWaitlist) {
   return targetWaitlist === false && member.is_waitlist && getMissingCount(group) <= 0;
+}
+
+async function getMemberLines(context, client, members, emptyText, includeState = false) {
+  if (!members.length) {
+    return [emptyText];
+  }
+
+  const memberNames = await Promise.all(
+    members.map((member) => resolveDisplayName(context, client, member.user_id, member.user_name))
+  );
+
+  return members.map((member, index) => {
+    const stateText = includeState ? `（${getMemberStateName(member.is_waitlist)}）` : '';
+
+    return `${index + 1}. ${memberNames[index]}：${member.class_name}${stateText}`;
+  });
+}
+
+async function formatGroupDetail(context, client, group, index = null) {
+  const missingCount = getMissingCount(group);
+  const members = await getGroupMembers(group.id);
+  const waitlistMembers = await getGroupMembers(group.id, true);
+  const pendingMembers = await getPendingMembers(group.id);
+  const leaderName = await resolveDisplayName(context, client, group.leader_id, group.leader_name);
+  const memberLines = await getMemberLines(context, client, members, '目前還沒有人透過 bot 加入');
+  const waitlistLines = await getMemberLines(context, client, waitlistMembers, '目前沒有候補');
+  const pendingLines = await getMemberLines(context, client, pendingMembers, '目前沒有待審', true);
+  const title = index ? `${index}. 副本團編號 ${group.group_code}` : `副本團編號 ${group.group_code}`;
+  const initialMemberText = group.initial_member_count > 0
+    ? [`預設人數：${group.initial_member_count} 人（未記錄 Discord 帳號）`]
+    : [];
+
+  return [
+    title,
+    `副本：${group.dungeon_name}`,
+    `團長：${leaderName}`,
+    `時間：${formatTaipeiDateTime(group.scheduled_at)}`,
+    `地點：${group.location_name}`,
+    `目前人數：${group.initial_member_count + group.member_count}/${group.max_members}`,
+    `還缺：${missingCount} 人`,
+    `候補：${group.waitlist_count} 人`,
+    `待審：${group.pending_count} 人`,
+    `加入審核：${group.approval_required ? '需要' : '不需要'}`,
+    `自動通知：${group.reminder_interval_minutes ? `每 ${group.reminder_interval_minutes} 分鐘` : '未開啟'}`,
+    `通知所有人：${group.notify_everyone ? '是' : '否'}`,
+    ...initialMemberText,
+    '正式成員：',
+    ...memberLines,
+    '候補成員：',
+    ...waitlistLines,
+    '待審成員：',
+    ...pendingLines
+  ].join('\n');
 }
 
 async function notifyGroupMembers(context, group, lines) {
@@ -237,46 +299,10 @@ export async function viewRaidGroup(context, client, fields) {
     return `咕嘎，找不到副本團編號 ${fields.groupCode}。`;
   }
 
-  const missingCount = getMissingCount(group);
-  const members = await getGroupMembers(group.id);
-  const waitlistMembers = await getGroupMembers(group.id, true);
-  const leaderName = await resolveDisplayName(context, client, group.leader_id, group.leader_name);
-  const memberNames = await Promise.all(
-    members.map((member) => resolveDisplayName(context, client, member.user_id, member.user_name))
-  );
-  const waitlistNames = await Promise.all(
-    waitlistMembers.map((member) => resolveDisplayName(context, client, member.user_id, member.user_name))
-  );
-  const memberLines = members.length
-    ? members.map((member, index) => `${index + 1}. ${memberNames[index]}：${member.class_name}`)
-    : ['目前還沒有人透過 bot 加入'];
-  const waitlistLines = waitlistMembers.length
-    ? waitlistMembers.map((member, index) => `${index + 1}. ${waitlistNames[index]}：${member.class_name}`)
-    : ['目前沒有候補'];
-  const initialMemberText = group.initial_member_count > 0
-    ? [`預設人數：${group.initial_member_count} 人（未記錄 Discord 帳號）`]
-    : [];
-
-  return [
+  return limitReplyLength([
     '咕嘎嘎，查到這團了：',
-    `副本團編號 ${group.group_code}`,
-    `副本：${group.dungeon_name}`,
-    `團長：${leaderName}`,
-    `時間：${formatTaipeiDateTime(group.scheduled_at)}`,
-    `地點：${group.location_name}`,
-    `目前人數：${group.initial_member_count + group.member_count}/${group.max_members}`,
-    `還缺：${missingCount} 人`,
-    `候補：${group.waitlist_count} 人`,
-    `待審：${group.pending_count} 人`,
-    `加入審核：${group.approval_required ? '需要' : '不需要'}`,
-    `自動通知：${group.reminder_interval_minutes ? `每 ${group.reminder_interval_minutes} 分鐘` : '未開啟'}`,
-    `通知所有人：${group.notify_everyone ? '是' : '否'}`,
-    ...initialMemberText,
-    '正式成員：',
-    ...memberLines,
-    '候補成員：',
-    ...waitlistLines
-  ].join('\n');
+    await formatGroupDetail(context, client, group)
+  ].join('\n'));
 }
 
 export async function viewRecruitingBoard(context, client) {
@@ -290,6 +316,9 @@ export async function viewRecruitingBoard(context, client) {
     const leaderName = await resolveDisplayName(context, client, group.leader_id, group.leader_name);
     const missingCount = getMissingCount(group);
     const memberCount = group.initial_member_count + group.member_count;
+    const joinText = missingCount > 0
+      ? `加入方式：/加入團 團號:${group.group_code} 職業:你的職業，也可以加上 候補:true 先排候補`
+      : `正式團員已滿，可使用 /加入團 團號:${group.group_code} 職業:你的職業 候補:true 排候補`;
 
     return [
       `${index + 1}. 副本團編號 ${group.group_code}`,
@@ -297,16 +326,64 @@ export async function viewRecruitingBoard(context, client) {
       `團長：${leaderName}`,
       `時間：${formatTaipeiDateTime(group.scheduled_at)}`,
       `地點：${group.location_name}`,
-      `人數：${memberCount}/${group.max_members}，還缺 ${missingCount} 人，候補 ${group.waitlist_count} 人`,
+      `人數：${memberCount}/${group.max_members}，還缺 ${missingCount} 人，候補 ${group.waitlist_count} 人，待審 ${group.pending_count} 人`,
       `加入審核：${group.approval_required ? '需要' : '不需要'}`,
-      `加入方式：/加入團 團號:${group.group_code} 職業:你的職業，也可以加上 候補:true 先排候補`
+      joinText
     ].join('\n');
   }));
 
-  return [
+  return limitReplyLength([
     '咕嘎嘎，目前正在招募的副本團：',
     ...groupLines
-  ].join('\n\n');
+  ].join('\n\n'));
+}
+
+function getMyGroupSections(groups, userId) {
+  return [
+    {
+      title: '自己開的團',
+      groups: groups.filter((group) => group.leader_id === userId)
+    },
+    {
+      title: '已加入的團',
+      groups: groups.filter((group) => group.is_joined_by_me)
+    },
+    {
+      title: '待核准的團',
+      groups: groups.filter((group) => group.is_pending_by_me)
+    }
+  ];
+}
+
+export async function viewMyGroups(context, client) {
+  const userId = getActorId(context);
+  const groups = await getMyGroups(context.guildId, userId);
+
+  if (!groups.length) {
+    return '咕嘎，目前沒有找到你開的、已加入或待核准的副本團。';
+  }
+
+  const sectionLines = [];
+
+  for (const section of getMyGroupSections(groups, userId)) {
+    sectionLines.push(`【${section.title}】`);
+
+    if (!section.groups.length) {
+      sectionLines.push('目前沒有');
+      continue;
+    }
+
+    const groupLines = await Promise.all(
+      section.groups.map((group, index) => formatGroupDetail(context, client, group, index + 1))
+    );
+
+    sectionLines.push(...groupLines);
+  }
+
+  return limitReplyLength([
+    '咕嘎嘎，這是你的副本團：',
+    ...sectionLines
+  ].join('\n\n'));
 }
 
 export async function addRaidMemberByLeader(context, fields) {

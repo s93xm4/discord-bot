@@ -127,16 +127,47 @@ export async function getRecruitingGroups(guildId) {
   const result = await db.query(
     `SELECT rg.*,
             COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = FALSE)::INT AS member_count,
-            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = TRUE)::INT AS waitlist_count
+            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = TRUE)::INT AS waitlist_count,
+            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'pending')::INT AS pending_count
      FROM raid_groups rg
      LEFT JOIN raid_group_members rgm ON rgm.raid_group_id = rg.id
      WHERE rg.guild_id = $1
-       AND rg.status = 'open'
+       AND rg.status IN ('open', 'full')
        AND rg.scheduled_at > NOW()
      GROUP BY rg.id
-     HAVING rg.max_members - rg.initial_member_count - COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = FALSE) > 0
      ORDER BY rg.scheduled_at ASC, rg.created_at ASC`,
     [guildId]
+  );
+
+  return result.rows;
+}
+
+export async function getMyGroups(guildId, userId) {
+  const result = await db.query(
+    `SELECT rg.*,
+            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = FALSE)::INT AS member_count,
+            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = TRUE)::INT AS waitlist_count,
+            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'pending')::INT AS pending_count,
+            BOOL_OR(rgm.user_id = $2 AND rgm.member_status = 'joined') AS is_joined_by_me,
+            BOOL_OR(rgm.user_id = $2 AND rgm.member_status = 'pending') AS is_pending_by_me
+     FROM raid_groups rg
+     LEFT JOIN raid_group_members rgm ON rgm.raid_group_id = rg.id
+     WHERE rg.guild_id = $1
+       AND rg.status IN ('open', 'full')
+       AND rg.scheduled_at > NOW()
+       AND (
+         rg.leader_id = $2
+         OR EXISTS (
+           SELECT 1
+           FROM raid_group_members mine
+           WHERE mine.raid_group_id = rg.id
+             AND mine.user_id = $2
+             AND mine.member_status IN ('joined', 'pending')
+         )
+       )
+     GROUP BY rg.id
+     ORDER BY rg.scheduled_at ASC, rg.created_at ASC`,
+    [guildId, userId]
   );
 
   return result.rows;
