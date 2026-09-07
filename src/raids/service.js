@@ -1,3 +1,4 @@
+import { EmbedBuilder } from 'discord.js';
 import { getActorDisplayName, getActorId, resolveDisplayName } from '../utils/actors.js';
 import { formatTaipeiDateTime } from '../utils/dateTime.js';
 import {
@@ -29,6 +30,21 @@ export function getMissingCount(group) {
   return Math.max(group.max_members - group.initial_member_count - group.member_count, 0);
 }
 
+const embedColors = {
+  open: 0x57F287,
+  full: 0xFEE75C,
+  notice: 0x5865F2,
+  danger: 0xED4245
+};
+
+function trimEmbedValue(value, maxLength = 1024) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 20)}\n咕嘎，後面省略`;
+}
+
 function assertLeader(group, context, actionName) {
   if (group.leader_id !== getActorId(context)) {
     return `只有開團者可以${actionName}副本團編號 ${group.group_code}。`;
@@ -41,14 +57,6 @@ function formatMemberLines(members) {
   return members.length
     ? members.map((member, index) => `${index + 1}. ${member.user_name ?? member.user_id}：${member.class_name}`)
     : ['目前還沒有人透過 bot 加入'];
-}
-
-function limitReplyLength(text) {
-  if (text.length <= 1900) {
-    return text;
-  }
-
-  return `${text.slice(0, 1850)}\n\n咕嘎，內容太多，後面先省略。可以用 /查團 團號:副本團編號 查看單一團完整資訊。`;
 }
 
 function getGroupJoinStatus(group, missingCount) {
@@ -72,7 +80,7 @@ function shouldBlockFormalMove(group, member, targetWaitlist) {
   return targetWaitlist === false && member.is_waitlist && getMissingCount(group) <= 0;
 }
 
-async function getMemberLines(context, client, members, emptyText, includeState = false) {
+async function getMemberLines(context, client, members, emptyText, includeState = false, bullet = false) {
   if (!members.length) {
     return [emptyText];
   }
@@ -83,46 +91,55 @@ async function getMemberLines(context, client, members, emptyText, includeState 
 
   return members.map((member, index) => {
     const stateText = includeState ? `（${getMemberStateName(member.is_waitlist)}）` : '';
+    const prefix = bullet ? '-' : `${index + 1}.`;
 
-    return `${index + 1}. ${memberNames[index]}：${member.class_name}${stateText}`;
+    return `${prefix} ${memberNames[index]}：${member.class_name}${stateText}`;
   });
 }
 
-async function formatGroupDetail(context, client, group, index = null) {
+async function buildGroupEmbed(context, client, group, options = {}) {
   const missingCount = getMissingCount(group);
   const members = await getGroupMembers(group.id);
   const waitlistMembers = await getGroupMembers(group.id, true);
   const pendingMembers = await getPendingMembers(group.id);
   const leaderName = await resolveDisplayName(context, client, group.leader_id, group.leader_name);
-  const memberLines = await getMemberLines(context, client, members, '目前還沒有人透過 bot 加入');
-  const waitlistLines = await getMemberLines(context, client, waitlistMembers, '目前沒有候補');
-  const pendingLines = await getMemberLines(context, client, pendingMembers, '目前沒有待審', true);
-  const title = index ? `${index}. 副本團編號 ${group.group_code}` : `副本團編號 ${group.group_code}`;
-  const initialMemberText = group.initial_member_count > 0
-    ? [`預設人數：${group.initial_member_count} 人（未記錄 Discord 帳號）`]
-    : [];
+  const memberLines = await getMemberLines(context, client, members, '目前還沒有人透過 bot 加入', false, true);
+  const waitlistLines = await getMemberLines(context, client, waitlistMembers, '目前沒有候補', false, true);
+  const pendingLines = await getMemberLines(context, client, pendingMembers, '目前沒有待審', true, true);
+  const memberCount = group.initial_member_count + group.member_count;
+  const titlePrefix = options.sectionTitle ? `${options.sectionTitle} - ` : '';
+  const titleIndex = options.index ? `${options.index}. ` : '';
+  const footerParts = [
+    group.approval_required ? '入團需要審核' : '入團不需審核',
+    group.reminder_interval_minutes ? `每 ${group.reminder_interval_minutes} 分鐘提醒` : '未開啟自動提醒'
+  ];
 
-  return [
-    title,
-    `副本：${group.dungeon_name}`,
-    `團長：${leaderName}`,
-    `時間：${formatTaipeiDateTime(group.scheduled_at)}`,
-    `地點：${group.location_name}`,
-    `目前人數：${group.initial_member_count + group.member_count}/${group.max_members}`,
-    `還缺：${missingCount} 人`,
-    `候補：${group.waitlist_count} 人`,
-    `待審：${group.pending_count} 人`,
-    `加入審核：${group.approval_required ? '需要' : '不需要'}`,
-    `自動通知：${group.reminder_interval_minutes ? `每 ${group.reminder_interval_minutes} 分鐘` : '未開啟'}`,
-    `通知所有人：${group.notify_everyone ? '是' : '否'}`,
-    ...initialMemberText,
-    '正式成員：',
-    ...memberLines,
-    '候補成員：',
-    ...waitlistLines,
-    '待審成員：',
-    ...pendingLines
-  ].join('\n');
+  return new EmbedBuilder()
+    .setColor(missingCount > 0 ? embedColors.open : embedColors.full)
+    .setTitle(`${titlePrefix}${titleIndex}副本團 ${group.group_code}`)
+    .setDescription(`咕嘎嘎，${group.dungeon_name}`)
+    .addFields(
+      { name: '時間', value: formatTaipeiDateTime(group.scheduled_at), inline: true },
+      { name: '地點', value: group.location_name, inline: true },
+      { name: '團長', value: leaderName, inline: true },
+      { name: '人數', value: `${memberCount}/${group.max_members}`, inline: true },
+      { name: '還缺', value: `${missingCount} 人`, inline: true },
+      { name: '候補 / 待審', value: `${group.waitlist_count} / ${group.pending_count}`, inline: true },
+      { name: '正式成員', value: trimEmbedValue(memberLines.join('\n')), inline: false },
+      { name: '候補成員', value: trimEmbedValue(waitlistLines.join('\n')), inline: false },
+      { name: '待審成員', value: trimEmbedValue(pendingLines.join('\n')), inline: false }
+    )
+    .setFooter({ text: footerParts.join('｜') })
+    .setTimestamp(new Date(group.scheduled_at));
+}
+
+function buildNoticeEmbed(group, title, lines, color = embedColors.notice) {
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title)
+    .setDescription(trimEmbedValue(lines.join('\n'), 4096))
+    .setFooter({ text: `副本團 ${group.group_code}` })
+    .setTimestamp();
 }
 
 async function notifyGroupMembers(context, group, lines) {
@@ -142,10 +159,10 @@ async function notifyGroupMembers(context, group, lines) {
   }
 
   await context.channel.send({
-    content: [
-      userIds.map((userId) => `<@${userId}>`).join(' '),
-      ...lines
-    ].join('\n'),
+    content: userIds.map((userId) => `<@${userId}>`).join(' '),
+    embeds: [
+      buildNoticeEmbed(group, '副本團通知', lines)
+    ],
     allowedMentions: {
       users: userIds
     }
@@ -158,14 +175,21 @@ async function sendGroupCreatedNotice(context, groupCode, fields) {
   }
 
   await context.channel.send({
-    content: [
-      '@everyone 有新的副本團正在找人！',
-      `副本團編號：${groupCode}`,
-      `副本：${fields.dungeonName}`,
-      `時間：${formatTaipeiDateTime(fields.scheduledAt)}`,
-      `地點：${fields.locationName}`,
-      `想加入請使用：/加入團 團號:${groupCode} 職業:你的職業，也可以加上 候補:true 先排候補`
-    ].join('\n'),
+    content: '@everyone',
+    embeds: [
+      new EmbedBuilder()
+        .setColor(embedColors.open)
+        .setTitle('有新的副本團正在找人！')
+        .setDescription('咕嘎嘎，想加入請使用 `/加入團`，也可以選 `候補:true` 先排候補。')
+        .addFields(
+          { name: '副本團編號', value: groupCode, inline: true },
+          { name: '副本', value: fields.dungeonName, inline: true },
+          { name: '時間', value: formatTaipeiDateTime(fields.scheduledAt), inline: true },
+          { name: '地點', value: fields.locationName, inline: true },
+          { name: '加入方式', value: `/加入團 團號:${groupCode} 職業:你的職業`, inline: false }
+        )
+        .setTimestamp(fields.scheduledAt)
+    ],
     allowedMentions: {
       parse: ['everyone']
     }
@@ -178,12 +202,14 @@ async function notifyLeaderApplication(context, group, applicantName) {
   }
 
   await context.channel.send({
-    content: [
-      `<@${group.leader_id}> 咕嘎，有新的副本團加入申請需要審核。`,
-      `副本團編號：${group.group_code}`,
-      `申請者：${applicantName}`,
-      `請使用：/核准 團號:${group.group_code} 申請者:申請者 動作:核准`
-    ].join('\n'),
+    content: `<@${group.leader_id}>`,
+    embeds: [
+      buildNoticeEmbed(group, '有新的加入申請需要審核', [
+        `申請者：${applicantName}`,
+        `副本：${group.dungeon_name}`,
+        `請使用：/核准 團號:${group.group_code} 申請者:申請者 動作:核准`
+      ])
+    ],
     allowedMentions: {
       users: [group.leader_id]
     }
@@ -299,10 +325,12 @@ export async function viewRaidGroup(context, client, fields) {
     return `咕嘎，找不到副本團編號 ${fields.groupCode}。`;
   }
 
-  return limitReplyLength([
-    '咕嘎嘎，查到這團了：',
-    await formatGroupDetail(context, client, group)
-  ].join('\n'));
+  return {
+    content: '咕嘎嘎，查到這團了：',
+    embeds: [
+      await buildGroupEmbed(context, client, group)
+    ]
+  };
 }
 
 export async function viewRecruitingBoard(context, client) {
@@ -321,7 +349,7 @@ export async function viewRecruitingBoard(context, client) {
       : `正式團員已滿，可使用 /加入團 團號:${group.group_code} 職業:你的職業 候補:true 排候補`;
 
     return [
-      `${index + 1}. 副本團編號 ${group.group_code}`,
+      `**${index + 1}. 副本團 ${group.group_code}**`,
       `副本：${group.dungeon_name}`,
       `團長：${leaderName}`,
       `時間：${formatTaipeiDateTime(group.scheduled_at)}`,
@@ -332,10 +360,18 @@ export async function viewRecruitingBoard(context, client) {
     ].join('\n');
   }));
 
-  return limitReplyLength([
-    '咕嘎嘎，目前正在招募的副本團：',
-    ...groupLines
-  ].join('\n\n'));
+  return {
+    embeds: [
+      new EmbedBuilder()
+        .setColor(embedColors.notice)
+        .setTitle('目前正在招募的副本團')
+        .setDescription(trimEmbedValue([
+          '咕嘎嘎，正式團員滿了也會列出來，想排隊可以先加候補。',
+          ...groupLines
+        ].join('\n\n'), 4096))
+        .setTimestamp()
+    ]
+  };
 }
 
 function getMyGroupSections(groups, userId) {
@@ -363,27 +399,33 @@ export async function viewMyGroups(context, client) {
     return '咕嘎，目前沒有找到你開的、已加入或待核准的副本團。';
   }
 
-  const sectionLines = [];
+  const embeds = [];
+  let hiddenCount = 0;
 
   for (const section of getMyGroupSections(groups, userId)) {
-    sectionLines.push(`【${section.title}】`);
-
     if (!section.groups.length) {
-      sectionLines.push('目前沒有');
       continue;
     }
 
-    const groupLines = await Promise.all(
-      section.groups.map((group, index) => formatGroupDetail(context, client, group, index + 1))
-    );
+    for (const [index, group] of section.groups.entries()) {
+      if (embeds.length >= 10) {
+        hiddenCount += 1;
+        continue;
+      }
 
-    sectionLines.push(...groupLines);
+      embeds.push(await buildGroupEmbed(context, client, group, {
+        sectionTitle: section.title,
+        index: index + 1
+      }));
+    }
   }
 
-  return limitReplyLength([
-    '咕嘎嘎，這是你的副本團：',
-    ...sectionLines
-  ].join('\n\n'));
+  return {
+    content: hiddenCount
+      ? `咕嘎嘎，這是你的副本團。內容比較多，還有 ${hiddenCount} 團沒有顯示，請用 /查團 查看單一團。`
+      : '咕嘎嘎，這是你的副本團：',
+    embeds
+  };
 }
 
 export async function addRaidMemberByLeader(context, fields) {
@@ -756,11 +798,16 @@ export async function sendReminderMessages(client) {
     const prefix = group.notify_everyone ? '@everyone ' : '';
 
     await channel.send({
-      content: [
-        `${prefix}副本團編號 ${group.group_code}，副本 ${group.dungeon_name}，預定副本時間為 ${formatTaipeiDateTime(group.scheduled_at)}，目前還缺 ${missingCount} 人`,
-        '正式成員：',
-        ...memberLines
-      ].join('\n'),
+      content: prefix || undefined,
+      embeds: [
+        buildNoticeEmbed(group, `副本團還缺 ${missingCount} 人`, [
+          `咕嘎嘎，副本：${group.dungeon_name}`,
+          `預定時間：${formatTaipeiDateTime(group.scheduled_at)}`,
+          `地點：${group.location_name}`,
+          '正式成員：',
+          ...memberLines
+        ], embedColors.open)
+      ],
       allowedMentions: {
         parse: group.notify_everyone ? ['everyone'] : []
       }
@@ -789,15 +836,40 @@ export async function sendDueMessages(client) {
     const updatedGroup = await getGroupSummary(group.group_code);
     const updatedMissingCount = getMissingCount(updatedGroup);
     const members = await getGroupMembers(group.id);
-    const mentions = members.map((member) => `<@${member.user_id}>`).join(' ');
+    const userIds = members.map((member) => member.user_id);
+    const mentions = userIds.map((userId) => `<@${userId}>`).join(' ');
 
     if (updatedMissingCount > 0) {
-      await channel.send(`${mentions} 副本團編號 ${group.group_code}，人數未齊，該團解散`);
+      await channel.send({
+        content: mentions || undefined,
+        embeds: [
+          buildNoticeEmbed(group, '副本團人數未齊，該團解散', [
+            `咕嘎，副本：${group.dungeon_name}`,
+            `預定時間：${formatTaipeiDateTime(group.scheduled_at)}`,
+            `仍缺：${updatedMissingCount} 人`
+          ], embedColors.danger)
+        ],
+        allowedMentions: {
+          users: userIds
+        }
+      });
       await finishDueGroup(group.id, 'cancelled');
       continue;
     }
 
-    await channel.send(`${mentions} 副本團編號 ${group.group_code}，各位要打副本了呦~`);
+    await channel.send({
+      content: mentions || undefined,
+      embeds: [
+        buildNoticeEmbed(group, '各位要打副本了呦~', [
+          `咕嘎嘎，副本：${group.dungeon_name}`,
+          `集合地點：${group.location_name}`,
+          `預定時間：${formatTaipeiDateTime(group.scheduled_at)}`
+        ], embedColors.notice)
+      ],
+      allowedMentions: {
+        users: userIds
+      }
+    });
     await finishDueGroup(group.id, 'completed');
   }
 }
