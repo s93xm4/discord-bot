@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Events } from 'discord.js';
+import { Events, MessageFlags } from 'discord.js';
 import { client } from './client.js';
 import { registerSlashCommands, slashCommands } from './commands/index.js';
 import { initDatabase } from './raids/repository.js';
@@ -52,6 +52,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (reply) {
       await interaction.reply({
         content: reply,
+        flags: MessageFlags.Ephemeral,
         allowedMentions: {
           parse: []
         }
@@ -62,7 +63,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const errorReply = {
       content: '咕嘎，處理指令時發生錯誤，請稍後再試一次。',
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     };
 
     if (interaction.replied || interaction.deferred) {
