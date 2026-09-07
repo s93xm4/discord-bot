@@ -5,7 +5,7 @@ export const joinGroupCommand = {
   name: '加入團',
   data: new SlashCommandBuilder()
     .setName('加入團')
-    .setDescription('加入副本團，或修改自己在該團的職業')
+    .setDescription('加入副本團')
     .addStringOption((option) => option
       .setName('團號')
       .setDescription('副本團編號')

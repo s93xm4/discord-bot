@@ -11,9 +11,9 @@ function getSelectedUserName(interaction, user) {
 }
 
 export const leaderAddMemberCommand = {
-  name: '加入',
+  name: '新增團員',
   data: new SlashCommandBuilder()
-    .setName('加入')
+    .setName('新增團員')
     .setDescription('由開團者手動加入伺服器成員到副本團')
     .addStringOption((option) => option
       .setName('團號')
@@ -26,7 +26,10 @@ export const leaderAddMemberCommand = {
     .addStringOption((option) => option
       .setName('職業')
       .setDescription('該成員的職業名稱')
-      .setRequired(true)),
+      .setRequired(true))
+    .addBooleanOption((option) => option
+      .setName('候補')
+      .setDescription('是否加入候補；沒選就是正式團員')),
   async execute(interaction) {
     const user = interaction.options.getUser('成員', true);
 
@@ -34,7 +37,8 @@ export const leaderAddMemberCommand = {
       groupCode: interaction.options.getString('團號', true),
       userId: user.id,
       userName: getSelectedUserName(interaction, user),
-      className: interaction.options.getString('職業', true)
+      className: interaction.options.getString('職業', true),
+      preferWaitlist: interaction.options.getBoolean('候補') ?? false
     });
   }
 };

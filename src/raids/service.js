@@ -17,6 +17,7 @@ import {
   removeGroupMember,
   scheduleNextReminder,
   updateMemberApproval,
+  updateGroupMember,
   updateGroupNotification,
   updateGroupStatus,
   updateGroupTime,
@@ -43,6 +44,23 @@ function formatMemberLines(members) {
 
 function getGroupJoinStatus(group, missingCount) {
   return missingCount === 0 ? 'full' : 'open';
+}
+
+async function refreshGroupStatus(group, groupCode) {
+  const updatedGroup = await getGroupSummary(groupCode);
+  const missingCount = getMissingCount(updatedGroup);
+
+  await updateGroupStatus(group.id, getGroupJoinStatus(updatedGroup, missingCount));
+
+  return { group: updatedGroup, missingCount };
+}
+
+function getMemberStateName(isWaitlist) {
+  return isWaitlist ? '候補' : '正式';
+}
+
+function shouldBlockFormalMove(group, member, targetWaitlist) {
+  return targetWaitlist === false && member.is_waitlist && getMissingCount(group) <= 0;
 }
 
 async function notifyGroupMembers(context, group, lines) {
@@ -167,6 +185,11 @@ export async function joinRaidGroup(context, fields) {
   }
 
   const existingMember = await getExistingMember(group.id, userId);
+
+  if (existingMember?.member_status === 'joined') {
+    return `咕嘎，你已經在副本團編號 ${fields.groupCode} 裡了。要修改職業、退出或切換正式/候補，請使用 /自行修改。`;
+  }
+
   if (group.approval_required && (!existingMember || existingMember.member_status !== 'joined')) {
     await upsertGroupMember({
       raidGroupId: group.id,
@@ -181,9 +204,7 @@ export async function joinRaidGroup(context, fields) {
     return `咕嘎，已送出加入副本團編號 ${fields.groupCode} 的申請，請等待團長審核。`;
   }
 
-  const isWaitlist = existingMember
-    ? existingMember.is_waitlist
-    : fields.preferWaitlist || getMissingCount(group) <= 0;
+  const isWaitlist = fields.preferWaitlist || getMissingCount(group) <= 0;
 
   await upsertGroupMember({
     raidGroupId: group.id,
@@ -199,10 +220,6 @@ export async function joinRaidGroup(context, fields) {
   const status = getGroupJoinStatus(updatedGroup, missingCount);
 
   await updateGroupStatus(group.id, status);
-
-  if (existingMember) {
-    return `咕嘎，已幫你把副本團編號 ${fields.groupCode} 的職業改為 ${fields.className}。`;
-  }
 
   if (isWaitlist) {
     return fields.preferWaitlist
@@ -309,7 +326,7 @@ export async function addRaidMemberByLeader(context, fields) {
     return `咕嘎，副本團編號 ${fields.groupCode} 已結束，不能加入成員。`;
   }
 
-  const isWaitlist = getMissingCount(group) <= 0;
+  const isWaitlist = fields.preferWaitlist || getMissingCount(group) <= 0;
 
   await upsertGroupMember({
     raidGroupId: group.id,
@@ -355,6 +372,109 @@ export async function kickRaidMember(context, fields) {
   await updateGroupStatus(group.id, getGroupJoinStatus(updatedGroup, missingCount));
 
   return `咕嘎，已將 ${fields.userName} 從副本團編號 ${fields.groupCode} 移除，目前還缺少 ${missingCount} 人。`;
+}
+
+export async function selfManageRaidMember(context, fields) {
+  const group = await getGroupSummary(fields.groupCode);
+  const userId = getActorId(context);
+
+  if (!group) {
+    return `咕嘎，找不到副本團編號 ${fields.groupCode}。`;
+  }
+
+  if (group.status !== 'open' && group.status !== 'full') {
+    return `咕嘎，副本團編號 ${fields.groupCode} 已結束，不能修改。`;
+  }
+
+  const member = await getExistingMember(group.id, userId);
+
+  if (!member || member.member_status !== 'joined') {
+    return `咕嘎，你目前不是副本團編號 ${fields.groupCode} 的團員。`;
+  }
+
+  if (fields.action === 'leave') {
+    await removeGroupMember(group.id, userId);
+    const { missingCount } = await refreshGroupStatus(group, fields.groupCode);
+
+    return `咕嘎，已幫你退出副本團編號 ${fields.groupCode}，目前還缺少 ${missingCount} 人。`;
+  }
+
+  if (fields.action === 'class') {
+    if (!fields.className) {
+      return '咕嘎，要修改職業時需要填「職業」。';
+    }
+
+    await updateGroupMember(group.id, userId, {
+      className: fields.className,
+      isWaitlist: null
+    });
+
+    return `咕嘎，已幫你把副本團編號 ${fields.groupCode} 的職業改為 ${fields.className}。`;
+  }
+
+  const targetWaitlist = fields.action === 'waitlist';
+
+  if (member.is_waitlist === targetWaitlist) {
+    return `咕嘎，你已經是副本團編號 ${fields.groupCode} 的${getMemberStateName(targetWaitlist)}團員了。`;
+  }
+
+  if (shouldBlockFormalMove(group, member, targetWaitlist)) {
+    return `咕嘎，副本團編號 ${fields.groupCode} 的正式名額已滿，暫時不能從候補改成正式。`;
+  }
+
+  await updateGroupMember(group.id, userId, {
+    className: null,
+    isWaitlist: targetWaitlist
+  });
+  const { missingCount } = await refreshGroupStatus(group, fields.groupCode);
+
+  return `咕嘎，已幫你改成副本團編號 ${fields.groupCode} 的${getMemberStateName(targetWaitlist)}團員，目前還缺少 ${missingCount} 人。`;
+}
+
+export async function editRaidMemberByLeader(context, fields) {
+  const group = await getGroupSummary(fields.groupCode);
+
+  if (!group) {
+    return `咕嘎，找不到副本團編號 ${fields.groupCode}。`;
+  }
+
+  const leaderError = assertLeader(group, context, '編輯');
+
+  if (leaderError) {
+    return `咕嘎，${leaderError}`;
+  }
+
+  if (group.status !== 'open' && group.status !== 'full') {
+    return `咕嘎，副本團編號 ${fields.groupCode} 已結束，不能編輯團員。`;
+  }
+
+  if (!fields.className && fields.isWaitlist === null) {
+    return '咕嘎，請至少填一個要修改的內容：職業，或正式/候補狀態。';
+  }
+
+  const member = await getExistingMember(group.id, fields.userId);
+
+  if (!member || member.member_status !== 'joined') {
+    return `咕嘎，找不到這位團員，可能不在副本團編號 ${fields.groupCode} 裡。`;
+  }
+
+  if (shouldBlockFormalMove(group, member, fields.isWaitlist)) {
+    return `咕嘎，副本團編號 ${fields.groupCode} 的正式名額已滿，不能把 ${fields.userName} 從候補改成正式。`;
+  }
+
+  const updatedMember = await updateGroupMember(group.id, fields.userId, {
+    className: fields.className,
+    isWaitlist: fields.isWaitlist
+  });
+
+  const { missingCount } = await refreshGroupStatus(group, fields.groupCode);
+
+  return [
+    `咕嘎，已更新 ${fields.userName} 在副本團編號 ${fields.groupCode} 的資料。`,
+    `職業：${updatedMember.class_name}`,
+    `狀態：${getMemberStateName(updatedMember.is_waitlist)}`,
+    `目前還缺少 ${missingCount} 人。`
+  ].join('\n');
 }
 
 export async function manageRaidApplication(context, fields) {
