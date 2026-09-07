@@ -101,7 +101,7 @@ async function notifyLeaderApplication(context, group, applicantName) {
       `<@${group.leader_id}> 咕嘎，有新的副本團加入申請需要審核。`,
       `副本團編號：${group.group_code}`,
       `申請者：${applicantName}`,
-      `請使用：/管理團 團號:${group.group_code} 申請者:申請者 動作:核准`
+      `請使用：/核准 團號:${group.group_code} 申請者:申請者 動作:核准`
     ].join('\n'),
     allowedMentions: {
       users: [group.leader_id]
