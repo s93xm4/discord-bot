@@ -555,7 +555,7 @@ export async function getPendingApplicationChoices(context, fields) {
   const pendingMembers = await getPendingMembers(group.id);
 
   return pendingMembers.map((member) => ({
-    name: `${member.user_name ?? member.user_id}：${member.class_name}${member.is_waitlist ? '（候補）' : ''}`,
+    name: `${member.user_name ?? member.user_id}：${member.class_name}（${getMemberStateName(member.is_waitlist)}）`,
     value: member.user_id
   }));
 }
