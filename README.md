@@ -1,4 +1,4 @@
-# Discord Echo Bot
+# 副本排團用 Discord Bot
 
 這是一個 Discord 組團 bot：使用 slash command 開副本團、加入副本團、查看目前人數，並把資料記錄到線上 Postgres 資料庫。
 
