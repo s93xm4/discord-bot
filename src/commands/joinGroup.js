@@ -1,5 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { joinRaidGroup } from '../raids/service.js';
+import { addYesNoChoices, parseYesNoChoice } from '../utils/yesNoOption.js';
 
 export const joinGroupCommand = {
   name: '加入團',
@@ -14,14 +15,14 @@ export const joinGroupCommand = {
       .setName('職業')
       .setDescription('你的職業名稱')
       .setRequired(true))
-    .addBooleanOption((option) => option
+    .addStringOption((option) => addYesNoChoices(option
       .setName('候補')
-      .setDescription('是否先加入候補；沒選就是正式團員')),
+      .setDescription('是否先加入候補；沒選就是正式團員'))),
   async execute(interaction) {
     return joinRaidGroup(interaction, {
       groupCode: interaction.options.getString('團號', true),
       className: interaction.options.getString('職業', true),
-      preferWaitlist: interaction.options.getBoolean('候補') ?? false
+      preferWaitlist: parseYesNoChoice(interaction.options.getString('候補'), false)
     });
   }
 };

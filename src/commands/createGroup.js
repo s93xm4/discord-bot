@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { createRaidGroup } from '../raids/service.js';
 import { parseTaipeiDateTime } from '../utils/dateTime.js';
+import { addYesNoChoices, parseYesNoChoice } from '../utils/yesNoOption.js';
 
 export const createGroupCommand = {
   name: '開團',
@@ -36,12 +37,12 @@ export const createGroupCommand = {
       .setName('提醒分鐘')
       .setDescription('每隔幾分鐘提醒一次還缺多少人')
       .setMinValue(1))
-    .addBooleanOption((option) => option
+    .addStringOption((option) => addYesNoChoices(option
       .setName('通知所有人')
-      .setDescription('提醒時是否加上 @everyone'))
-    .addBooleanOption((option) => option
+      .setDescription('提醒時是否加上 @everyone')))
+    .addStringOption((option) => addYesNoChoices(option
       .setName('需要審核')
-      .setDescription('成員使用 /加入團 後是否需要團長審核')),
+      .setDescription('成員使用 /加入團 後是否需要團長審核'))),
   async execute(interaction) {
     const scheduledAt = parseTaipeiDateTime(
       interaction.options.getString('日期', true),
@@ -59,8 +60,8 @@ export const createGroupCommand = {
       locationName: interaction.options.getString('地點', true),
       scheduledAt,
       reminderIntervalMinutes: interaction.options.getInteger('提醒分鐘'),
-      notifyEveryone: interaction.options.getBoolean('通知所有人') ?? false,
-      approvalRequired: interaction.options.getBoolean('需要審核') ?? false
+      notifyEveryone: parseYesNoChoice(interaction.options.getString('通知所有人'), false),
+      approvalRequired: parseYesNoChoice(interaction.options.getString('需要審核'), false)
     });
   }
 };

@@ -1,5 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { addRaidMemberByLeader } from '../raids/service.js';
+import { addYesNoChoices, parseYesNoChoice } from '../utils/yesNoOption.js';
 
 function getSelectedUserName(interaction, user) {
   const member = interaction.options.getMember('成員');
@@ -27,9 +28,9 @@ export const leaderAddMemberCommand = {
       .setName('職業')
       .setDescription('該成員的職業名稱')
       .setRequired(true))
-    .addBooleanOption((option) => option
+    .addStringOption((option) => addYesNoChoices(option
       .setName('候補')
-      .setDescription('是否加入候補；沒選就是正式團員')),
+      .setDescription('是否加入候補；沒選就是正式團員'))),
   async execute(interaction) {
     const user = interaction.options.getUser('成員', true);
 
@@ -38,7 +39,7 @@ export const leaderAddMemberCommand = {
       userId: user.id,
       userName: getSelectedUserName(interaction, user),
       className: interaction.options.getString('職業', true),
-      preferWaitlist: interaction.options.getBoolean('候補') ?? false
+      preferWaitlist: parseYesNoChoice(interaction.options.getString('候補'), false)
     });
   }
 };
