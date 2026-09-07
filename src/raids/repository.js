@@ -156,10 +156,31 @@ export async function getGroupMembers(raidGroupId, waitlist = false) {
 
 export async function getExistingMember(raidGroupId, userId) {
   const result = await db.query(
-    `SELECT id, is_waitlist, member_status
+    `SELECT id, user_id, user_name, class_name, is_waitlist, member_status
      FROM raid_group_members
      WHERE raid_group_id = $1 AND user_id = $2`,
     [raidGroupId, userId]
+  );
+
+  return result.rows[0] ?? null;
+}
+
+export async function updateGroupMember(raidGroupId, userId, member) {
+  const result = await db.query(
+    `UPDATE raid_group_members
+     SET class_name = COALESCE($1, class_name),
+         is_waitlist = COALESCE($2, is_waitlist),
+         updated_at = NOW()
+     WHERE raid_group_id = $3
+       AND user_id = $4
+       AND member_status = 'joined'
+     RETURNING user_id, user_name, class_name, is_waitlist`,
+    [
+      member.className,
+      member.isWaitlist,
+      raidGroupId,
+      userId
+    ]
   );
 
   return result.rows[0] ?? null;
