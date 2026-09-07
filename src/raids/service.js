@@ -180,7 +180,7 @@ async function sendGroupCreatedNotice(context, groupCode, fields) {
       new EmbedBuilder()
         .setColor(embedColors.open)
         .setTitle('有新的副本團正在找人！')
-        .setDescription('咕嘎嘎，想加入請使用 `/加入團`，也可以選 `候補:true` 先排候補。')
+        .setDescription('咕嘎嘎，想加入請使用 `/加入團`，也可以選 `候補:是` 先排候補。')
         .addFields(
           { name: '副本團編號', value: groupCode, inline: true },
           { name: '副本', value: fields.dungeonName, inline: true },
@@ -345,8 +345,8 @@ export async function viewRecruitingBoard(context, client) {
     const missingCount = getMissingCount(group);
     const memberCount = group.initial_member_count + group.member_count;
     const joinText = missingCount > 0
-      ? `加入方式：/加入團 團號:${group.group_code} 職業:你的職業，也可以加上 候補:true 先排候補`
-      : `正式團員已滿，可使用 /加入團 團號:${group.group_code} 職業:你的職業 候補:true 排候補`;
+      ? `加入方式：/加入團 團號:${group.group_code} 職業:你的職業，也可以加上 候補:是 先排候補`
+      : `正式團員已滿，可使用 /加入團 團號:${group.group_code} 職業:你的職業 候補:是 排候補`;
 
     return [
       `**${index + 1}. 副本團 ${group.group_code}**`,

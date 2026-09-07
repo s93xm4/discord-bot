@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { updateRaidNotification, updateRaidTime } from '../raids/service.js';
 import { parseTaipeiDateTime } from '../utils/dateTime.js';
+import { addYesNoChoices, parseYesNoChoice } from '../utils/yesNoOption.js';
 
 export const manageGroupCommand = {
   name: '管理團',
@@ -36,9 +37,9 @@ export const manageGroupCommand = {
       .setName('提醒分鐘')
       .setDescription('開啟通知時，每隔幾分鐘提醒一次')
       .setMinValue(1))
-    .addBooleanOption((option) => option
+    .addStringOption((option) => addYesNoChoices(option
       .setName('通知所有人')
-      .setDescription('提醒時是否加上 @everyone')),
+      .setDescription('提醒時是否加上 @everyone'))),
   async execute(interaction) {
     const groupCode = interaction.options.getString('團號', true);
     const feature = interaction.options.getString('功能', true);
@@ -73,7 +74,7 @@ export const manageGroupCommand = {
       groupCode,
       action,
       reminderIntervalMinutes: interaction.options.getInteger('提醒分鐘'),
-      notifyEveryone: interaction.options.getBoolean('通知所有人')
+      notifyEveryone: parseYesNoChoice(interaction.options.getString('通知所有人'))
     });
   }
 };
