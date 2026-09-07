@@ -10,9 +10,12 @@ import {
   getExistingMember,
   getGroupMembers,
   getGroupSummary,
+  getPendingMembers,
   getRecruitingGroups,
   getReminderDueGroups,
+  removeGroupMember,
   scheduleNextReminder,
+  updateMemberApproval,
   updateGroupNotification,
   updateGroupStatus,
   updateGroupTime,
@@ -35,6 +38,10 @@ function formatMemberLines(members) {
   return members.length
     ? members.map((member, index) => `${index + 1}. ${member.user_name ?? member.user_id}：${member.class_name}`)
     : ['目前還沒有人透過 bot 加入'];
+}
+
+function getGroupJoinStatus(group, missingCount) {
+  return missingCount === 0 ? 'full' : 'open';
 }
 
 async function notifyGroupMembers(context, group, lines) {
@@ -84,6 +91,24 @@ async function sendGroupCreatedNotice(context, groupCode, fields) {
   });
 }
 
+async function notifyLeaderApplication(context, group, applicantName) {
+  if (!context.channel?.isTextBased()) {
+    return;
+  }
+
+  await context.channel.send({
+    content: [
+      `<@${group.leader_id}> 咕嘎，有新的副本團加入申請需要審核。`,
+      `副本團編號：${group.group_code}`,
+      `申請者：${applicantName}`,
+      `請使用：/管理團 團號:${group.group_code} 申請者:申請者 動作:核准`
+    ].join('\n'),
+    allowedMentions: {
+      users: [group.leader_id]
+    }
+  });
+}
+
 export async function createRaidGroup(context, fields) {
   const initialMemberCount = fields.initialMemberCount ?? 0;
   const leaderName = getActorDisplayName(context);
@@ -114,7 +139,8 @@ export async function createRaidGroup(context, fields) {
     scheduledAt: fields.scheduledAt,
     reminderIntervalMinutes: fields.reminderIntervalMinutes,
     nextReminderAt,
-    notifyEveryone: fields.notifyEveryone ?? false
+    notifyEveryone: fields.notifyEveryone ?? false,
+    approvalRequired: fields.approvalRequired ?? false
   });
 
   await sendGroupCreatedNotice(context, groupCode, fields);
@@ -140,6 +166,20 @@ export async function joinRaidGroup(context, fields) {
   }
 
   const existingMember = await getExistingMember(group.id, userId);
+  if (group.approval_required && (!existingMember || existingMember.member_status !== 'joined')) {
+    await upsertGroupMember({
+      raidGroupId: group.id,
+      userId,
+      userName,
+      className: fields.className,
+      isWaitlist: false,
+      memberStatus: 'pending'
+    });
+    await notifyLeaderApplication(context, group, userName);
+
+    return `咕嘎，已送出加入副本團編號 ${fields.groupCode} 的申請，請等待團長審核。`;
+  }
+
   const isWaitlist = existingMember ? existingMember.is_waitlist : getMissingCount(group) <= 0;
 
   await upsertGroupMember({
@@ -147,12 +187,13 @@ export async function joinRaidGroup(context, fields) {
     userId,
     userName,
     className: fields.className,
-    isWaitlist
+    isWaitlist,
+    memberStatus: 'joined'
   });
 
   const updatedGroup = await getGroupSummary(fields.groupCode);
   const missingCount = getMissingCount(updatedGroup);
-  const status = missingCount === 0 ? 'full' : 'open';
+  const status = getGroupJoinStatus(updatedGroup, missingCount);
 
   await updateGroupStatus(group.id, status);
 
@@ -204,6 +245,8 @@ export async function viewRaidGroup(context, client, fields) {
     `目前人數：${group.initial_member_count + group.member_count}/${group.max_members}`,
     `還缺：${missingCount} 人`,
     `候補：${group.waitlist_count} 人`,
+    `待審：${group.pending_count} 人`,
+    `加入審核：${group.approval_required ? '需要' : '不需要'}`,
     `自動通知：${group.reminder_interval_minutes ? `每 ${group.reminder_interval_minutes} 分鐘` : '未開啟'}`,
     `通知所有人：${group.notify_everyone ? '是' : '否'}`,
     ...initialMemberText,
@@ -233,6 +276,7 @@ export async function viewRecruitingBoard(context, client) {
       `時間：${formatTaipeiDateTime(group.scheduled_at)}`,
       `地點：${group.location_name}`,
       `人數：${memberCount}/${group.max_members}，還缺 ${missingCount} 人，候補 ${group.waitlist_count} 人`,
+      `加入審核：${group.approval_required ? '需要' : '不需要'}`,
       `加入方式：/加入團 團號:${group.group_code} 職業:你的職業`
     ].join('\n');
   }));
@@ -241,6 +285,154 @@ export async function viewRecruitingBoard(context, client) {
     '咕嘎嘎，目前正在招募的副本團：',
     ...groupLines
   ].join('\n\n');
+}
+
+export async function addRaidMemberByLeader(context, fields) {
+  const group = await getGroupSummary(fields.groupCode);
+
+  if (!group) {
+    return `咕嘎，找不到副本團編號 ${fields.groupCode}。`;
+  }
+
+  const leaderError = assertLeader(group, context, '加入成員到');
+
+  if (leaderError) {
+    return `咕嘎，${leaderError}`;
+  }
+
+  if (group.status !== 'open' && group.status !== 'full') {
+    return `咕嘎，副本團編號 ${fields.groupCode} 已結束，不能加入成員。`;
+  }
+
+  const isWaitlist = getMissingCount(group) <= 0;
+
+  await upsertGroupMember({
+    raidGroupId: group.id,
+    userId: fields.userId,
+    userName: fields.userName,
+    className: fields.className,
+    isWaitlist,
+    memberStatus: 'joined'
+  });
+
+  const updatedGroup = await getGroupSummary(fields.groupCode);
+  const missingCount = getMissingCount(updatedGroup);
+
+  await updateGroupStatus(group.id, getGroupJoinStatus(updatedGroup, missingCount));
+
+  return isWaitlist
+    ? `咕嘎，已將 ${fields.userName} 加入副本團編號 ${fields.groupCode} 的候補，職業為 ${fields.className}。`
+    : `咕嘎，已將 ${fields.userName} 加入副本團編號 ${fields.groupCode}，目前還缺少 ${missingCount} 人。`;
+}
+
+export async function kickRaidMember(context, fields) {
+  const group = await getGroupSummary(fields.groupCode);
+
+  if (!group) {
+    return `咕嘎，找不到副本團編號 ${fields.groupCode}。`;
+  }
+
+  const leaderError = assertLeader(group, context, '踢出');
+
+  if (leaderError) {
+    return `咕嘎，${leaderError}`;
+  }
+
+  const removedCount = await removeGroupMember(group.id, fields.userId);
+
+  if (!removedCount) {
+    return `咕嘎，找不到這位團員，可能已經不在副本團編號 ${fields.groupCode} 裡了。`;
+  }
+
+  const updatedGroup = await getGroupSummary(fields.groupCode);
+  const missingCount = getMissingCount(updatedGroup);
+
+  await updateGroupStatus(group.id, getGroupJoinStatus(updatedGroup, missingCount));
+
+  return `咕嘎，已將 ${fields.userName} 從副本團編號 ${fields.groupCode} 移除，目前還缺少 ${missingCount} 人。`;
+}
+
+export async function manageRaidApplication(context, fields) {
+  const group = await getGroupSummary(fields.groupCode);
+
+  if (!group) {
+    return `咕嘎，找不到副本團編號 ${fields.groupCode}。`;
+  }
+
+  const leaderError = assertLeader(group, context, '管理');
+
+  if (leaderError) {
+    return `咕嘎，${leaderError}`;
+  }
+
+  const pendingMembers = await getPendingMembers(group.id);
+  const pendingMember = pendingMembers.find((member) => member.user_id === fields.userId);
+
+  if (!pendingMember) {
+    return `咕嘎，找不到這位成員的待審申請。`;
+  }
+
+  if (fields.action === 'reject') {
+    await updateMemberApproval(group.id, fields.userId, {
+      memberStatus: 'rejected',
+      isWaitlist: false
+    });
+
+    return `咕嘎，已拒絕 ${pendingMember.user_name ?? fields.userId} 加入副本團編號 ${fields.groupCode}。`;
+  }
+
+  const isWaitlist = getMissingCount(group) <= 0;
+  const updatedCount = await updateMemberApproval(group.id, fields.userId, {
+    memberStatus: 'joined',
+    isWaitlist
+  });
+
+  if (!updatedCount) {
+    return `咕嘎，審核失敗，這筆申請可能已經被處理過了。`;
+  }
+
+  const updatedGroup = await getGroupSummary(fields.groupCode);
+  const missingCount = getMissingCount(updatedGroup);
+
+  await updateGroupStatus(group.id, getGroupJoinStatus(updatedGroup, missingCount));
+
+  return isWaitlist
+    ? `咕嘎，已核准 ${pendingMember.user_name ?? fields.userId} 加入副本團編號 ${fields.groupCode} 的候補。`
+    : `咕嘎，已核准 ${pendingMember.user_name ?? fields.userId} 加入副本團編號 ${fields.groupCode}，目前還缺少 ${missingCount} 人。`;
+}
+
+export async function getKickMemberChoices(context, fields) {
+  const group = await getGroupSummary(fields.groupCode);
+
+  if (!group || group.leader_id !== getActorId(context)) {
+    return [];
+  }
+
+  const members = await getGroupMembers(group.id);
+  const waitlistMembers = await getGroupMembers(group.id, true);
+
+  return [
+    ...members.map((member) => ({ ...member, listLabel: '正式' })),
+    ...waitlistMembers.map((member) => ({ ...member, listLabel: '候補' }))
+  ].map((member) => ({
+    name: `${member.user_name ?? member.user_id}：${member.class_name}（${member.listLabel}）`,
+    value: member.user_id
+  }));
+}
+
+export async function getPendingApplicationChoices(context, fields) {
+  const group = await getGroupSummary(fields.groupCode);
+
+  if (!group || group.leader_id !== getActorId(context)) {
+    return [];
+  }
+
+  const pendingMembers = await getPendingMembers(group.id);
+
+  return pendingMembers.map((member) => ({
+    name: `${member.user_name ?? member.user_id}：${member.class_name}`,
+    value: member.user_id
+  }));
 }
 
 export async function cancelRaidGroup(context, fields) {

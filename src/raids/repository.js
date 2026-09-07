@@ -18,6 +18,7 @@ export async function initDatabase() {
       reminder_interval_minutes INTEGER,
       next_reminder_at TIMESTAMPTZ,
       notify_everyone BOOLEAN NOT NULL DEFAULT FALSE,
+      approval_required BOOLEAN NOT NULL DEFAULT FALSE,
       status TEXT NOT NULL DEFAULT 'open',
       due_notified BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -33,6 +34,7 @@ export async function initDatabase() {
       user_name TEXT,
       class_name TEXT NOT NULL,
       is_waitlist BOOLEAN NOT NULL DEFAULT FALSE,
+      member_status TEXT NOT NULL DEFAULT 'joined',
       joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (raid_group_id, user_id)
@@ -47,6 +49,16 @@ export async function initDatabase() {
   await db.query(`
     ALTER TABLE raid_group_members
     ADD COLUMN IF NOT EXISTS user_name TEXT
+  `);
+
+  await db.query(`
+    ALTER TABLE raid_groups
+    ADD COLUMN IF NOT EXISTS approval_required BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await db.query(`
+    ALTER TABLE raid_group_members
+    ADD COLUMN IF NOT EXISTS member_status TEXT NOT NULL DEFAULT 'joined'
   `);
 }
 
@@ -73,9 +85,9 @@ export async function createGroup(group) {
     `INSERT INTO raid_groups (
        group_code, guild_id, channel_id, leader_id, leader_name, dungeon_name, max_members,
        initial_member_count, location_name, scheduled_at, reminder_interval_minutes,
-       next_reminder_at, notify_everyone
+       next_reminder_at, notify_everyone, approval_required
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
     [
       group.groupCode,
       group.guildId,
@@ -89,7 +101,8 @@ export async function createGroup(group) {
       group.scheduledAt,
       group.reminderIntervalMinutes,
       group.nextReminderAt,
-      group.notifyEveryone
+      group.notifyEveryone,
+      group.approvalRequired
     ]
   );
 }
@@ -97,8 +110,9 @@ export async function createGroup(group) {
 export async function getGroupSummary(groupCode) {
   const result = await db.query(
     `SELECT rg.*,
-            COUNT(rgm.id) FILTER (WHERE rgm.is_waitlist = FALSE)::INT AS member_count,
-            COUNT(rgm.id) FILTER (WHERE rgm.is_waitlist = TRUE)::INT AS waitlist_count
+            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = FALSE)::INT AS member_count,
+            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = TRUE)::INT AS waitlist_count,
+            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'pending')::INT AS pending_count
      FROM raid_groups rg
      LEFT JOIN raid_group_members rgm ON rgm.raid_group_id = rg.id
      WHERE rg.group_code = $1
@@ -112,15 +126,15 @@ export async function getGroupSummary(groupCode) {
 export async function getRecruitingGroups(guildId) {
   const result = await db.query(
     `SELECT rg.*,
-            COUNT(rgm.id) FILTER (WHERE rgm.is_waitlist = FALSE)::INT AS member_count,
-            COUNT(rgm.id) FILTER (WHERE rgm.is_waitlist = TRUE)::INT AS waitlist_count
+            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = FALSE)::INT AS member_count,
+            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = TRUE)::INT AS waitlist_count
      FROM raid_groups rg
      LEFT JOIN raid_group_members rgm ON rgm.raid_group_id = rg.id
      WHERE rg.guild_id = $1
        AND rg.status = 'open'
        AND rg.scheduled_at > NOW()
      GROUP BY rg.id
-     HAVING rg.max_members - rg.initial_member_count - COUNT(rgm.id) FILTER (WHERE rgm.is_waitlist = FALSE) > 0
+     HAVING rg.max_members - rg.initial_member_count - COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = FALSE) > 0
      ORDER BY rg.scheduled_at ASC, rg.created_at ASC`,
     [guildId]
   );
@@ -132,7 +146,7 @@ export async function getGroupMembers(raidGroupId, waitlist = false) {
   const result = await db.query(
     `SELECT user_id, user_name, class_name
      FROM raid_group_members
-     WHERE raid_group_id = $1 AND is_waitlist = $2
+     WHERE raid_group_id = $1 AND is_waitlist = $2 AND member_status = 'joined'
      ORDER BY joined_at ASC`,
     [raidGroupId, waitlist]
   );
@@ -142,7 +156,7 @@ export async function getGroupMembers(raidGroupId, waitlist = false) {
 
 export async function getExistingMember(raidGroupId, userId) {
   const result = await db.query(
-    `SELECT id, is_waitlist
+    `SELECT id, is_waitlist, member_status
      FROM raid_group_members
      WHERE raid_group_id = $1 AND user_id = $2`,
     [raidGroupId, userId]
@@ -153,10 +167,12 @@ export async function getExistingMember(raidGroupId, userId) {
 
 export async function upsertGroupMember(member) {
   await db.query(
-    `INSERT INTO raid_group_members (raid_group_id, user_id, user_name, class_name, is_waitlist)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO raid_group_members (raid_group_id, user_id, user_name, class_name, is_waitlist, member_status)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (raid_group_id, user_id)
      DO UPDATE SET class_name = EXCLUDED.class_name,
+                   is_waitlist = EXCLUDED.is_waitlist,
+                   member_status = EXCLUDED.member_status,
                    user_name = EXCLUDED.user_name,
                    updated_at = NOW()`,
     [
@@ -164,16 +180,62 @@ export async function upsertGroupMember(member) {
       member.userId,
       member.userName,
       member.className,
-      member.isWaitlist
+      member.isWaitlist,
+      member.memberStatus
     ]
   );
+}
+
+export async function removeGroupMember(raidGroupId, userId) {
+  const result = await db.query(
+    `DELETE FROM raid_group_members
+     WHERE raid_group_id = $1 AND user_id = $2 AND member_status = 'joined'`,
+    [raidGroupId, userId]
+  );
+
+  return result.rowCount;
+}
+
+export async function getPendingMembers(raidGroupId) {
+  const result = await db.query(
+    `SELECT user_id, user_name, class_name
+     FROM raid_group_members
+     WHERE raid_group_id = $1 AND member_status = 'pending'
+     ORDER BY joined_at ASC`,
+    [raidGroupId]
+  );
+
+  return result.rows;
+}
+
+export async function updateMemberApproval(raidGroupId, userId, approval) {
+  const result = await db.query(
+    `UPDATE raid_group_members
+     SET member_status = $1,
+         is_waitlist = $2,
+         updated_at = NOW()
+     WHERE raid_group_id = $3 AND user_id = $4 AND member_status = 'pending'`,
+    [
+      approval.memberStatus,
+      approval.isWaitlist,
+      raidGroupId,
+      userId
+    ]
+  );
+
+  return result.rowCount;
 }
 
 export async function updateGroupStatus(groupId, status) {
   await db.query(
     `UPDATE raid_groups
      SET status = $1,
-         next_reminder_at = CASE WHEN $1 = 'full' THEN NULL ELSE next_reminder_at END,
+         next_reminder_at = CASE
+           WHEN $1 = 'full' THEN NULL
+           WHEN reminder_interval_minutes IS NOT NULL AND next_reminder_at IS NULL
+             THEN NOW() + (reminder_interval_minutes || ' minutes')::INTERVAL
+           ELSE next_reminder_at
+         END,
          updated_at = NOW()
      WHERE id = $2`,
     [status, groupId]
@@ -224,7 +286,7 @@ export async function updateGroupNotification(groupId, notification) {
 export async function getReminderDueGroups() {
   const result = await db.query(
     `SELECT rg.*,
-            COUNT(rgm.id) FILTER (WHERE rgm.is_waitlist = FALSE)::INT AS member_count
+            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = FALSE)::INT AS member_count
      FROM raid_groups rg
      LEFT JOIN raid_group_members rgm ON rgm.raid_group_id = rg.id
      WHERE rg.status IN ('open', 'full')
@@ -240,7 +302,7 @@ export async function getReminderDueGroups() {
 export async function getDueGroups() {
   const result = await db.query(
     `SELECT rg.*,
-            COUNT(rgm.id) FILTER (WHERE rgm.is_waitlist = FALSE)::INT AS member_count
+            COUNT(rgm.id) FILTER (WHERE rgm.member_status = 'joined' AND rgm.is_waitlist = FALSE)::INT AS member_count
      FROM raid_groups rg
      LEFT JOIN raid_group_members rgm ON rgm.raid_group_id = rg.id
      WHERE rg.status IN ('open', 'full')
