@@ -50,8 +50,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const reply = await command.execute(interaction, client);
 
     if (reply) {
+      const replyPayload = typeof reply === 'string'
+        ? { content: reply }
+        : reply;
+
       await interaction.reply({
-        content: reply,
+        ...replyPayload,
         flags: MessageFlags.Ephemeral,
         allowedMentions: {
           parse: []
