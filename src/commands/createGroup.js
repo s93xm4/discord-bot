@@ -38,7 +38,10 @@ export const createGroupCommand = {
       .setMinValue(1))
     .addBooleanOption((option) => option
       .setName('通知所有人')
-      .setDescription('提醒時是否加上 @everyone')),
+      .setDescription('提醒時是否加上 @everyone'))
+    .addBooleanOption((option) => option
+      .setName('需要審核')
+      .setDescription('成員使用 /加入團 後是否需要團長審核')),
   async execute(interaction) {
     const scheduledAt = parseTaipeiDateTime(
       interaction.options.getString('日期', true),
@@ -56,7 +59,8 @@ export const createGroupCommand = {
       locationName: interaction.options.getString('地點', true),
       scheduledAt,
       reminderIntervalMinutes: interaction.options.getInteger('提醒分鐘'),
-      notifyEveryone: interaction.options.getBoolean('通知所有人') ?? false
+      notifyEveryone: interaction.options.getBoolean('通知所有人') ?? false,
+      approvalRequired: interaction.options.getBoolean('需要審核') ?? false
     });
   }
 };
