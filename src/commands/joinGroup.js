@@ -13,11 +13,15 @@ export const joinGroupCommand = {
     .addStringOption((option) => option
       .setName('職業')
       .setDescription('你的職業名稱')
-      .setRequired(true)),
+      .setRequired(true))
+    .addBooleanOption((option) => option
+      .setName('候補')
+      .setDescription('是否先加入候補；沒選就是正式團員')),
   async execute(interaction) {
     return joinRaidGroup(interaction, {
       groupCode: interaction.options.getString('團號', true),
-      className: interaction.options.getString('職業', true)
+      className: interaction.options.getString('職業', true),
+      preferWaitlist: interaction.options.getBoolean('候補') ?? false
     });
   }
 };

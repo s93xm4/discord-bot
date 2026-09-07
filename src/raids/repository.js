@@ -196,9 +196,36 @@ export async function removeGroupMember(raidGroupId, userId) {
   return result.rowCount;
 }
 
+export async function promoteWaitlistMembers(raidGroupId, count) {
+  if (count <= 0) {
+    return [];
+  }
+
+  const result = await db.query(
+    `WITH promoted AS (
+       SELECT id
+       FROM raid_group_members
+       WHERE raid_group_id = $1
+         AND member_status = 'joined'
+         AND is_waitlist = TRUE
+       ORDER BY joined_at ASC
+       LIMIT $2
+     )
+     UPDATE raid_group_members rgm
+     SET is_waitlist = FALSE,
+         updated_at = NOW()
+     FROM promoted
+     WHERE rgm.id = promoted.id
+     RETURNING rgm.user_id, rgm.user_name, rgm.class_name`,
+    [raidGroupId, count]
+  );
+
+  return result.rows;
+}
+
 export async function getPendingMembers(raidGroupId) {
   const result = await db.query(
-    `SELECT user_id, user_name, class_name
+    `SELECT user_id, user_name, class_name, is_waitlist
      FROM raid_group_members
      WHERE raid_group_id = $1 AND member_status = 'pending'
      ORDER BY joined_at ASC`,
