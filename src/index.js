@@ -14,7 +14,7 @@ client.once(Events.ClientReady, async () => {
     console.error('Failed to register slash commands:', error);
   }
 
-  startScheduler(client);
+  client.raidScheduler = startScheduler(client);
   console.log(`Logged in as ${client.user.tag}`);
 });
 

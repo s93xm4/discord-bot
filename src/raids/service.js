@@ -144,6 +144,10 @@ function buildNoticeEmbed(group, title, lines, color = embedColors.notice) {
     .setTimestamp();
 }
 
+function scheduleSoon(context) {
+  context.client?.raidScheduler?.scheduleSoon();
+}
+
 async function notifyGroupMembers(context, group, lines) {
   if (!context.channel?.isTextBased()) {
     return;
@@ -257,6 +261,7 @@ export async function createRaidGroup(context, fields) {
   });
 
   await sendGroupCreatedNotice(context, groupCode, fields);
+  scheduleSoon(context);
 
   const reminderText = fields.reminderIntervalMinutes
     ? `，每 ${fields.reminderIntervalMinutes} 分鐘提醒一次${fields.notifyEveryone ? '，會通知所有人' : ''}`
@@ -707,6 +712,7 @@ export async function cancelRaidGroup(context, fields) {
   }
 
   await cancelGroup(group.id);
+  scheduleSoon(context);
   await notifyGroupMembers(context, group, [
     `咕嘎，副本團編號 ${fields.groupCode} 已由團長解散。`,
     `副本：${group.dungeon_name}`,
@@ -735,6 +741,7 @@ export async function updateRaidNotification(context, fields) {
       nextReminderAt: null,
       notifyEveryone: fields.notifyEveryone ?? group.notify_everyone
     });
+    scheduleSoon(context);
 
     return `咕嘎，副本團編號 ${fields.groupCode} 已停止自動通知。`;
   }
@@ -754,6 +761,7 @@ export async function updateRaidNotification(context, fields) {
     nextReminderAt: new Date(Date.now() + reminderIntervalMinutes * 60 * 1000),
     notifyEveryone: fields.notifyEveryone ?? group.notify_everyone
   });
+  scheduleSoon(context);
 
   return `咕嘎，副本團編號 ${fields.groupCode} 已開啟自動通知，每 ${reminderIntervalMinutes} 分鐘提醒一次。`;
 }
@@ -776,6 +784,7 @@ export async function updateRaidTime(context, fields) {
   }
 
   await updateGroupTime(group.id, fields.scheduledAt);
+  scheduleSoon(context);
   await notifyGroupMembers(context, group, [
     `咕嘎，副本團編號 ${fields.groupCode} 的時間已由團長修改。`,
     `副本：${group.dungeon_name}`,

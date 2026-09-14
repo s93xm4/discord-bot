@@ -393,6 +393,29 @@ export async function getDueGroups() {
   return result.rows;
 }
 
+export async function getNextSchedulerRunAt() {
+  const result = await db.query(
+    `SELECT MIN(next_run_at) AS next_run_at
+     FROM (
+       SELECT next_reminder_at AS next_run_at
+       FROM raid_groups
+       WHERE status IN ('open', 'full')
+         AND reminder_interval_minutes IS NOT NULL
+         AND next_reminder_at IS NOT NULL
+         AND next_reminder_at > NOW()
+         AND scheduled_at > NOW()
+       UNION ALL
+       SELECT scheduled_at AS next_run_at
+       FROM raid_groups
+       WHERE status IN ('open', 'full')
+         AND due_notified = FALSE
+         AND scheduled_at > NOW()
+     ) scheduled_runs`
+  );
+
+  return result.rows[0]?.next_run_at ?? null;
+}
+
 export async function scheduleNextReminder(groupId) {
   await db.query(
     `UPDATE raid_groups
